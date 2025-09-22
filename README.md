@@ -52,7 +52,7 @@ doc.bookmarks.each_pair do |bookmark_name, bookmark_object|
 end
 ```
 
-Don't have a local file but a buffer? Docx handles those to:
+Don't have a local file but a buffer? Docx handles those too:
 
 ```ruby
 require 'docx'
@@ -130,6 +130,14 @@ doc.paragraphs.each do |p|
   end
 end
 
+# Substitute text with access to captures, note block arg is a MatchData, a bit
+# different than String.gsub. https://ruby-doc.org/3.3.7/MatchData.html
+doc.paragraphs.each do |p|
+  p.each_text_run do |tr|
+    tr.substitute_with_block(/total: (\d+)/) { |match_data| "total: #{match_data[1].to_i * 10}" }
+  end
+end
+
 # Save document to specified path
 doc.save('example-edited.docx')
 ```
@@ -145,7 +153,7 @@ doc = Docx::Document.open('tables.docx')
 # Iterate over each table
 doc.tables.each do |table|
   last_row = table.rows.last
-  
+
   # Copy last row and insert a new one before last row
   new_row = last_row.copy
   new_row.insert_before(last_row)
@@ -261,3 +269,4 @@ The following is a list of attributes and what they control within the style.
 * Default formatting of inserted elements to inherited values
 * Implement formattable elements.
 * Easier multi-line text insertion at a single bookmark (inserting paragraph nodes after the one containing the bookmark)
+

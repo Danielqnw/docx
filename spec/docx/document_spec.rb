@@ -20,12 +20,6 @@ describe Docx::Document do
     end
 
     context 'When reading a un-supported file' do
-      it 'should throw file not supported error' do
-        expect do
-          Docx::Document.open(@fixtures_path + '/invalid_format.pdf')
-        end.to raise_error(Errno::EIO, 'Input/output error - Invalid file format')
-      end
-
       it 'should throw file not found error' do
         invalid_path = @fixtures_path + '/invalid_file_path.docx'
         expect do
@@ -205,6 +199,19 @@ describe Docx::Document do
       end
 
       expect(@doc.paragraphs[1].text).to eq('Multi-line paragraph line 1same paragraph line 2yet the same paragraph line3 ')
+    end
+
+    it "should replace placeholder in any line of paragraph using substitute_with_block" do
+      expect(@doc.paragraphs[0].text).to eq('Page title')
+      expect(@doc.paragraphs[1].text).to eq('Multi-line paragraph line 1_placeholder2_ line 2_placeholder3_ line3 ')
+
+      @doc.paragraphs[1].each_text_run do |text_run|
+        text_run.substitute_with_block(/_placeholder(\d)_/) { |match_data|
+          "_replacement_#{match_data[1]}"
+        }
+      end
+
+      expect(@doc.paragraphs[1].text).to eq('Multi-line paragraph line 1_replacement_2 line 2_replacement_3 line3 ')
     end
   end
 

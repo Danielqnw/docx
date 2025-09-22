@@ -8,14 +8,34 @@ on:
 jobs:
   build:
     name: Build a package
-
     runs-on: ubuntu-latest
-
     steps:
-      - uses: actions/checkout@v3
-
-      - uses: softprops/action-gh-release@v1
-        if: startsWith(github.ref, 'refs/tags/') # Run only when tagged like v1.0.1
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
         with:
-          files: packages/${{steps.package_name.outputs.package_name}}.zip
+          ruby-version: 3.4
+          bundler-cache: true
+      - run: bundle exec rake build
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    if: startsWith(github.ref, 'refs/tags/') # Run only when tagged like v1.0.1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: 3.4
+          bundler-cache: true
+      - id: package_name
+        run: |
+          echo "package_name=$(basename pkg/*.gem | tail -n1)" >> $GITHUB_OUTPUT
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: pkg/${{steps.package_name.outputs.package_name}}
           generate_release_notes: true
+      - uses: rubygems/release-gem@v1
