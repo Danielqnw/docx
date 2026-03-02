@@ -3,5 +3,7 @@ module Docx
     StyleNotFound = Class.new(StandardError)
     StyleInvalidPropertyValue = Class.new(StandardError)
     StyleRequiredPropertyValue = Class.new(StandardError)
+    ImageNotFound = Class.new(StandardError)
+    ImagePlaceholderNotFound = Class.new(StandardError)
   end
 end
