@@ -3,6 +3,7 @@ require 'docx/elements'
 require 'docx/errors'
 require 'docx/helpers'
 require 'nokogiri'
+require 'stringio'
 require 'zip'
 
 module Docx
@@ -29,6 +30,14 @@ module Docx
       footers: "word/footer*.xml",
       numbering: "word/numbering.xml"
     }
+    IMAGE_FIT_MODES = %i[cover contain stretch].freeze
+    XML_NAMESPACES = {
+      'w' => 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
+      'a' => 'http://schemas.openxmlformats.org/drawingml/2006/main',
+      'r' => 'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
+      'wp' => 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing',
+      'pic' => 'http://schemas.openxmlformats.org/drawingml/2006/picture'
+    }.freeze
 
     attr_reader :xml, :doc, :zip, :styles, :headers, :footers, :numbering
 
@@ -114,6 +123,18 @@ module Docx
       @rels.xpath("//xmlns:Relationship[contains(@Type,'hyperlink')]")
     end
 
+    # Image targets are extracted from the document.xml.rels file.
+    # Returned as { "rIdX" => "word/media/imageX.png" }.
+    def images
+      image_relationships.each_with_object({}) do |rel, hash|
+        hash[rel.attributes['Id'].value] = normalize_entry_path(rel.attributes['Target'].value)
+      end
+    end
+
+    def image_relationships
+      @rels.xpath("//xmlns:Relationship[contains(@Type,'/image')]")
+    end
+
     ##
     # *Deprecated*
     #
@@ -179,6 +200,47 @@ module Docx
 
     def replace_entry(entry_path, file_contents)
       @replace[entry_path] = file_contents
+    end
+
+    # Replace an image by relationship ID (e.g. "rId5") or by archive entry path
+    # (e.g. "word/media/image1.png").
+    #
+    # replacement_source accepts an IO-like object (responds to #read) or a file path.
+    def replace_image(image_reference, replacement_source)
+      image_entry_path = resolve_image_entry_path(image_reference)
+      replace_entry(image_entry_path, read_replacement_source(replacement_source))
+    end
+
+    # Replace an image located by placeholder text in a table cell.
+    #
+    # Options:
+    #   fit: :cover | :contain | :stretch (default: :stretch)
+    #   cleanup_placeholder: true | false (default: true)
+    def replace_image_by_placeholder_in_table(placeholder, replacement_source, options = {})
+      fit = normalize_fit_option(options.fetch(:fit, :stretch))
+      cleanup_placeholder = options.fetch(:cleanup_placeholder, true)
+
+      target_cell = find_table_cell_by_placeholder(placeholder)
+      raise Errors::ImagePlaceholderNotFound, "Placeholder not found in table cells: #{placeholder}" if target_cell.nil?
+
+      embed_attr = target_cell.at_xpath('.//a:blip/@r:embed', XML_NAMESPACES)
+      raise Errors::ImageNotFound, "No image found in the same cell as placeholder: #{placeholder}" if embed_attr.nil?
+
+      rid = embed_attr.value
+      image_entry_path = resolve_image_entry_path(rid)
+      replacement_contents = read_replacement_source(replacement_source)
+
+      replace_entry(image_entry_path, replacement_contents)
+
+      drawing_node = target_cell.at_xpath(".//w:drawing[.//a:blip[@r:embed='#{rid}']]", XML_NAMESPACES)
+      apply_image_fit_to_drawing(drawing_node, fit, replacement_contents) if drawing_node && fit != :stretch
+      remove_placeholder_from_cell(target_cell, placeholder) if cleanup_placeholder
+
+      {
+        relationship_id: rid,
+        entry_path: image_entry_path,
+        fit: fit
+      }
     end
 
     def default_paragraph_style
@@ -271,6 +333,182 @@ module Docx
 
     def parse_table_from(t_node)
       Elements::Containers::Table.new(t_node)
+    end
+
+    def resolve_image_entry_path(image_reference)
+      if images.key?(image_reference)
+        path = images[image_reference]
+      else
+        path = normalize_entry_path(image_reference)
+      end
+
+      return path if zip.find_entry(path)
+
+      raise Errors::ImageNotFound, "Image entry not found: #{image_reference}"
+    end
+
+    def normalize_entry_path(path)
+      clean_path = path.to_s.sub(%r{\A/+}, '').sub(%r{\A\./}, '')
+      clean_path = "word/#{clean_path.sub(%r{\A\.\./}, '')}" if clean_path.start_with?('../')
+      clean_path = "word/#{clean_path}" unless clean_path.start_with?('word/')
+      clean_path
+    end
+
+    def read_replacement_source(replacement_source)
+      if replacement_source.respond_to?(:read)
+        replacement_source.read
+      elsif replacement_source.is_a?(String) && File.exist?(replacement_source)
+        File.binread(replacement_source)
+      else
+        raise ArgumentError, "replacement_source must be an IO-like object or an existing file path"
+      end
+    end
+
+    def find_table_cell_by_placeholder(placeholder)
+      doc.xpath('//w:tbl//w:tr//w:tc', XML_NAMESPACES).find do |cell|
+        text = cell.xpath('.//w:t', XML_NAMESPACES).map(&:text).join
+        text.include?(placeholder)
+      end
+    end
+
+    def remove_placeholder_from_cell(cell, placeholder)
+      cell.xpath('.//w:p', XML_NAMESPACES).each do |paragraph|
+        text_nodes = paragraph.xpath('.//w:t', XML_NAMESPACES)
+        next if text_nodes.empty?
+
+        merged_text = text_nodes.map(&:text).join
+        next unless merged_text.include?(placeholder)
+
+        text_nodes.first.content = merged_text.gsub(placeholder, '')
+        text_nodes.drop(1).each { |node| node.content = '' }
+      end
+    end
+
+    def normalize_fit_option(fit)
+      fit_value = fit.to_sym
+      return fit_value if IMAGE_FIT_MODES.include?(fit_value)
+
+      raise ArgumentError, "fit must be one of: #{IMAGE_FIT_MODES.join(', ')}"
+    end
+
+    def apply_image_fit_to_drawing(drawing_node, fit, replacement_contents)
+      source_width, source_height = image_size_from_bytes(replacement_contents)
+      if fit == :cover
+        apply_cover_fit(drawing_node, source_width, source_height)
+      elsif fit == :contain
+        apply_contain_fit(drawing_node, source_width, source_height)
+      end
+    end
+
+    def image_size_from_bytes(bytes)
+      return png_size_from_bytes(bytes) if bytes.start_with?("\x89PNG\r\n\x1A\n".b)
+      return jpeg_size_from_bytes(bytes) if bytes.start_with?("\xFF\xD8".b)
+
+      raise ArgumentError, "Unsupported image format. Only PNG and JPEG are supported for fit modes."
+    end
+
+    def png_size_from_bytes(bytes)
+      [bytes[16, 4].unpack1('N'), bytes[20, 4].unpack1('N')]
+    end
+
+    def jpeg_size_from_bytes(bytes)
+      io = StringIO.new(bytes)
+      io.read(2) # SOI
+      until io.eof?
+        marker_prefix = io.read(1)&.ord
+        next unless marker_prefix == 0xFF
+
+        marker = io.read(1)&.ord
+        next if marker.nil? || marker == 0xD8 || marker == 0xD9
+        next if marker == 0x01 || (0xD0..0xD7).include?(marker)
+
+        length = io.read(2)&.unpack1('n')
+        break unless length && length >= 2
+
+        if [0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF].include?(marker)
+          io.read(1) # precision
+          height = io.read(2).unpack1('n')
+          width = io.read(2).unpack1('n')
+          return [width, height]
+        end
+
+        io.read(length - 2)
+      end
+
+      raise ArgumentError, "Cannot parse JPEG size: invalid image"
+    end
+
+    def apply_cover_fit(drawing_node, source_width, source_height)
+      extent = drawing_node.at_xpath('.//wp:extent', XML_NAMESPACES)
+      return unless extent
+
+      target_width = extent['cx'].to_f
+      target_height = extent['cy'].to_f
+      return if target_width <= 0 || target_height <= 0
+
+      source_ratio = source_width.to_f / source_height
+      target_ratio = target_width / target_height
+
+      blip_fill = drawing_node.at_xpath('.//pic:blipFill', XML_NAMESPACES)
+      return unless blip_fill
+
+      if source_ratio > target_ratio
+        visible_width_ratio = target_ratio / source_ratio
+        crop_percent = ((1.0 - visible_width_ratio) / 2.0 * 100_000).round
+        set_or_create_src_rect(blip_fill, 'l' => crop_percent, 'r' => crop_percent, 't' => 0, 'b' => 0)
+      else
+        visible_height_ratio = source_ratio / target_ratio
+        crop_percent = ((1.0 - visible_height_ratio) / 2.0 * 100_000).round
+        set_or_create_src_rect(blip_fill, 'l' => 0, 'r' => 0, 't' => crop_percent, 'b' => crop_percent)
+      end
+    end
+
+    def apply_contain_fit(drawing_node, source_width, source_height)
+      wp_extent = drawing_node.at_xpath('.//wp:extent', XML_NAMESPACES)
+      xfrm_extent = drawing_node.at_xpath('.//pic:spPr/a:xfrm/a:ext', XML_NAMESPACES)
+      return unless wp_extent && xfrm_extent
+
+      frame_width = wp_extent['cx'].to_f
+      frame_height = wp_extent['cy'].to_f
+      return if frame_width <= 0 || frame_height <= 0
+
+      source_ratio = source_width.to_f / source_height
+      frame_ratio = frame_width / frame_height
+
+      if source_ratio > frame_ratio
+        new_width = frame_width
+        new_height = (frame_width / source_ratio).round
+      else
+        new_height = frame_height
+        new_width = (frame_height * source_ratio).round
+      end
+
+      wp_extent['cx'] = new_width.to_i.to_s
+      wp_extent['cy'] = new_height.to_i.to_s
+      xfrm_extent['cx'] = new_width.to_i.to_s
+      xfrm_extent['cy'] = new_height.to_i.to_s
+
+      blip_fill = drawing_node.at_xpath('.//pic:blipFill', XML_NAMESPACES)
+      remove_src_rect(blip_fill) if blip_fill
+    end
+
+    def set_or_create_src_rect(blip_fill_node, attrs)
+      src_rect = blip_fill_node.at_xpath('./a:srcRect', XML_NAMESPACES)
+      unless src_rect
+        src_rect = Nokogiri::XML::Node.new('a:srcRect', blip_fill_node.document)
+        blip = blip_fill_node.at_xpath('./a:blip', XML_NAMESPACES)
+        if blip
+          blip.add_next_sibling(src_rect)
+        else
+          blip_fill_node.prepend_child(src_rect)
+        end
+      end
+      attrs.each { |key, value| src_rect[key] = value.to_i.to_s }
+    end
+
+    def remove_src_rect(blip_fill_node)
+      src_rect = blip_fill_node.at_xpath('./a:srcRect', XML_NAMESPACES)
+      src_rect.remove if src_rect
     end
   end
 end

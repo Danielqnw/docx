@@ -3,6 +3,7 @@
 require 'spec_helper'
 require 'docx'
 require 'tempfile'
+require 'stringio'
 
 describe Docx::Document do
   before(:all) do
@@ -526,6 +527,182 @@ describe Docx::Document do
 
     after do
       File.delete(temp_file_path) if File.exist?(temp_file_path)
+    end
+  end
+
+  describe 'replacing images' do
+    let(:rels_xml) do
+      <<~XML
+        <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+          <Relationship
+            Id="rId5"
+            Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+            Target="media/image1.png" />
+        </Relationships>
+      XML
+    end
+    let(:doc) do
+      d = Docx::Document.allocate
+      d.instance_variable_set(:@replace, {})
+      d.instance_variable_set(:@rels, Nokogiri::XML(rels_xml))
+      d.instance_variable_set(:@zip, zip)
+      d
+    end
+    let(:zip) { instance_double(Zip::File) }
+
+    it 'lists image relationships as normalized entry paths' do
+      expect(doc.images).to eq('rId5' => 'word/media/image1.png')
+    end
+
+    it 'replaces image by relationship id from file path' do
+      allow(zip).to receive(:find_entry).with('word/media/image1.png').and_return(true)
+      replacement = Tempfile.new(['replacement', '.png'])
+      replacement.binmode
+      replacement.write('new-image')
+      replacement.close
+
+      begin
+        doc.replace_image('rId5', replacement.path)
+        expect(doc.instance_variable_get(:@replace)['word/media/image1.png']).to eq('new-image')
+      ensure
+        replacement.unlink
+      end
+    end
+
+    it 'replaces image by entry path from io' do
+      allow(zip).to receive(:find_entry).with('word/media/image1.png').and_return(true)
+      io = StringIO.new('io-image')
+      doc.replace_image('word/media/image1.png', io)
+      expect(doc.instance_variable_get(:@replace)['word/media/image1.png']).to eq('io-image')
+    end
+
+    it 'raises when image entry cannot be resolved' do
+      allow(zip).to receive(:find_entry).with('word/media/unknown.png').and_return(false)
+      expect { doc.replace_image('word/media/unknown.png', StringIO.new('x')) }
+        .to raise_error(Docx::Errors::ImageNotFound)
+    end
+  end
+
+  describe 'replacing images by placeholder' do
+    let(:doc_xml) do
+      <<~XML
+        <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                    xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+                    xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+                    xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                    xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+          <w:body>
+            <w:tbl>
+              <w:tr>
+                <w:tc>
+                  <w:p><w:r><w:t>{{photo_a}}</w:t></w:r></w:p>
+                  <w:p>
+                    <w:r>
+                      <w:drawing>
+                        <wp:inline>
+                          <wp:extent cx="1600" cy="900" />
+                          <a:graphic>
+                            <a:graphicData>
+                              <pic:pic>
+                                <pic:blipFill>
+                                  <a:blip r:embed="rId5" />
+                                  <a:stretch><a:fillRect/></a:stretch>
+                                </pic:blipFill>
+                                <pic:spPr>
+                                  <a:xfrm>
+                                    <a:ext cx="1600" cy="900" />
+                                  </a:xfrm>
+                                </pic:spPr>
+                              </pic:pic>
+                            </a:graphicData>
+                          </a:graphic>
+                        </wp:inline>
+                      </w:drawing>
+                    </w:r>
+                  </w:p>
+                </w:tc>
+              </w:tr>
+            </w:tbl>
+          </w:body>
+        </w:document>
+      XML
+    end
+    let(:rels_xml) do
+      <<~XML
+        <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+          <Relationship
+            Id="rId5"
+            Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+            Target="media/image1.png" />
+        </Relationships>
+      XML
+    end
+    let(:zip) { instance_double(Zip::File) }
+    let(:doc) do
+      d = Docx::Document.allocate
+      d.instance_variable_set(:@replace, {})
+      d.instance_variable_set(:@doc, Nokogiri::XML(doc_xml))
+      d.instance_variable_set(:@rels, Nokogiri::XML(rels_xml))
+      d.instance_variable_set(:@zip, zip)
+      d
+    end
+
+    def fake_png(width, height)
+      "\x89PNG\r\n\x1A\n".b + "\x00\x00\x00\rIHDR".b + [width, height].pack('N2') + "\x08\x02\x00\x00\x00".b
+    end
+
+    it 'replaces image by placeholder and cleans placeholder text by default' do
+      allow(zip).to receive(:find_entry).with('word/media/image1.png').and_return(true)
+
+      result = doc.replace_image_by_placeholder_in_table('{{photo_a}}', StringIO.new('img-bytes'))
+
+      expect(result[:relationship_id]).to eq('rId5')
+      expect(result[:entry_path]).to eq('word/media/image1.png')
+      expect(doc.instance_variable_get(:@replace)['word/media/image1.png']).to eq('img-bytes')
+
+      cell_text = doc.doc.xpath('//w:tc//w:t', Docx::Document::XML_NAMESPACES).map(&:text).join
+      expect(cell_text).not_to include('{{photo_a}}')
+    end
+
+    it 'keeps placeholder text when cleanup_placeholder is false' do
+      allow(zip).to receive(:find_entry).with('word/media/image1.png').and_return(true)
+
+      doc.replace_image_by_placeholder_in_table('{{photo_a}}', StringIO.new('img-bytes'), cleanup_placeholder: false)
+
+      cell_text = doc.doc.xpath('//w:tc//w:t', Docx::Document::XML_NAMESPACES).map(&:text).join
+      expect(cell_text).to include('{{photo_a}}')
+    end
+
+    it 'applies cover fit by setting srcRect crop values' do
+      allow(zip).to receive(:find_entry).with('word/media/image1.png').and_return(true)
+
+      doc.replace_image_by_placeholder_in_table('{{photo_a}}', StringIO.new(fake_png(1000, 1000)), fit: :cover, cleanup_placeholder: false)
+
+      src_rect = doc.doc.at_xpath('//pic:blipFill/a:srcRect', Docx::Document::XML_NAMESPACES)
+      expect(src_rect).not_to be_nil
+      expect(src_rect['t'].to_i).to be > 0
+      expect(src_rect['b'].to_i).to be > 0
+    end
+
+    it 'applies contain fit by resizing extents and removing srcRect' do
+      allow(zip).to receive(:find_entry).with('word/media/image1.png').and_return(true)
+      # pre-populate srcRect so we can assert it gets removed in contain mode
+      blip_fill = doc.doc.at_xpath('//pic:blipFill', Docx::Document::XML_NAMESPACES)
+      blip_fill.add_child('<a:srcRect xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" t="1000" b="1000"/>')
+
+      doc.replace_image_by_placeholder_in_table('{{photo_a}}', StringIO.new(fake_png(1000, 1000)), fit: :contain, cleanup_placeholder: false)
+
+      wp_extent = doc.doc.at_xpath('//wp:extent', Docx::Document::XML_NAMESPACES)
+      expect(wp_extent['cx']).to eq('900')
+      expect(wp_extent['cy']).to eq('900')
+      src_rect = doc.doc.at_xpath('//pic:blipFill/a:srcRect', Docx::Document::XML_NAMESPACES)
+      expect(src_rect).to be_nil
+    end
+
+    it 'raises when placeholder cannot be found' do
+      allow(zip).to receive(:find_entry).and_return(true)
+      expect { doc.replace_image_by_placeholder_in_table('{{missing}}', StringIO.new('x')) }
+        .to raise_error(Docx::Errors::ImagePlaceholderNotFound)
     end
   end
 

@@ -142,6 +142,32 @@ end
 doc.save('example-edited.docx')
 ```
 
+### Replacing images
+
+```ruby
+require 'docx'
+
+doc = Docx::Document.open('with-images.docx')
+
+# Inspect image relationship IDs mapped to archive paths
+# => { "rId5" => "word/media/image1.png", ... }
+pp doc.images
+
+# Replace by relationship ID using a file path
+doc.replace_image('rId5', 'replacement.png')
+
+# Replace by entry path using an IO object
+File.open('replacement.png', 'rb') do |io|
+  doc.replace_image('word/media/image1.png', io)
+end
+
+# Replace by placeholder text in a table cell.
+# fit: :stretch (default) | :cover | :contain
+doc.replace_image_by_placeholder_in_table('{{photo_a}}', 'replacement.png', fit: :cover)
+
+doc.save('with-images-edited.docx')
+```
+
 ### Writing to tables
 
 ``` ruby
