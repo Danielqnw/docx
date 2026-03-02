@@ -162,15 +162,23 @@ module Docx
     def save(path)
       update
       Zip::OutputStream.open(path) do |out|
+        written_entries = {}
         zip.each do |entry|
           next unless entry.file?
 
           out.put_next_entry(entry.name)
           value = @replace[entry.name] || zip.read(entry.name)
+          written_entries[entry.name] = true
 
           out.write(value)
         end
 
+        @replace.each do |entry_name, contents|
+          next if written_entries[entry_name]
+
+          out.put_next_entry(entry_name)
+          out.write(contents)
+        end
       end
       zip.close
     end
@@ -179,16 +187,25 @@ module Docx
     def stream
       update
       stream = Zip::OutputStream.write_buffer do |out|
+        written_entries = {}
         zip.each do |entry|
           next unless entry.file?
 
           out.put_next_entry(entry.name)
+          written_entries[entry.name] = true
 
           if @replace[entry.name]
             out.write(@replace[entry.name])
           else
             out.write(zip.read(entry.name))
           end
+        end
+
+        @replace.each do |entry_name, contents|
+          next if written_entries[entry_name]
+
+          out.put_next_entry(entry_name)
+          out.write(contents)
         end
       end
 
@@ -241,6 +258,68 @@ module Docx
         entry_path: image_entry_path,
         fit: fit
       }
+    end
+
+    # Batch replacement for a single placeholder anchored in table cell.
+    #
+    # +placeholder+ identifies the template cell and row. Images are placed into that
+    # same cell, up to +max_images_per_row+ per row. If images exceed one row, the
+    # template row is duplicated and appended.
+    #
+    # Returns an array of placement hashes:
+    #   [{ row_index: 0, slot_index: 0, relationship_id: "rId25", entry_path: "word/media/image_generated_1.png" }, ...]
+    def replace_images_by_placeholder_in_table(placeholder, replacement_sources, options = {})
+      replacement_sources = Array(replacement_sources)
+      raise ArgumentError, 'replacement_sources must not be empty' if replacement_sources.empty?
+
+      fit = normalize_fit_option(options.fetch(:fit, :stretch))
+      cleanup_placeholder = options.fetch(:cleanup_placeholder, true)
+      max_images_per_row = options.fetch(:max_images_per_row, 2).to_i
+      raise ArgumentError, 'max_images_per_row must be >= 1' if max_images_per_row < 1
+
+      template_cell = find_table_cell_by_placeholder(placeholder)
+      raise Errors::ImagePlaceholderNotFound, "Placeholder not found in table cells: #{placeholder}" if template_cell.nil?
+
+      template_row = template_cell.at_xpath('./ancestor::w:tr[1]', XML_NAMESPACES)
+      raise Errors::ImageNotFound, "No template row found for placeholder: #{placeholder}" if template_row.nil?
+      row_template = template_row.dup(1)
+
+      row_nodes = [template_row]
+      placements = []
+      cell_index = table_cell_index_within_row(template_row, template_cell)
+
+      replacement_sources.each_with_index do |replacement_source, index|
+        row_index = index / max_images_per_row
+        slot_index = index % max_images_per_row
+
+        if row_index >= row_nodes.length
+          cloned = row_template.dup(1)
+          row_nodes.last.add_next_sibling(cloned)
+          row_nodes << cloned
+        end
+
+        current_row = row_nodes[row_index]
+        current_cell = current_row.xpath('./w:tc', XML_NAMESPACES)[cell_index]
+        raise Errors::ImageNotFound, "Row #{row_index + 1} does not contain target cell index #{cell_index}" if current_cell.nil?
+
+        slot = ensure_image_slot_in_cell(current_cell, slot_index)
+        raise Errors::ImageNotFound, "Unable to create image slot #{slot_index + 1} for row #{row_index + 1}" if slot.nil?
+
+        replacement_contents = read_replacement_source(replacement_source)
+        generated = create_media_binding_for_slot(slot[:embed_attr], replacement_contents)
+        apply_image_fit_to_drawing(slot[:drawing_node], fit, replacement_contents) if fit != :stretch
+
+        placements << {
+          row_index: row_index,
+          slot_index: slot_index,
+          relationship_id: generated[:relationship_id],
+          entry_path: generated[:entry_path],
+          fit: fit
+        }
+      end
+
+      remove_placeholder_from_row_nodes(row_nodes, placeholder) if cleanup_placeholder
+      placements
     end
 
     def default_paragraph_style
@@ -297,6 +376,7 @@ module Docx
       rels_entry = @zip.glob('word/_rels/document*.xml.rels').first
       raise Errno::ENOENT unless rels_entry
 
+      @rels_path = rels_entry.name
       @rels_xml = rels_entry.get_input_stream.read
       @rels = Nokogiri::XML(@rels_xml)
     end
@@ -309,6 +389,7 @@ module Docx
     def update
       replace_entry 'word/document.xml', doc.serialize(save_with: 0)
       replace_entry 'word/styles.xml', styles_configuration.serialize(save_with: 0)
+      replace_entry @rels_path, @rels.serialize(save_with: 0) if @rels_path && @rels
       DOCUMENT_PATHS.each do |attr_name, path|
         if path.match /\*/
           self.instance_variable_get("@#{attr_name}").each do |simple_file_name, contents|
@@ -371,6 +452,34 @@ module Docx
       end
     end
 
+    def table_cell_index_within_row(row_node, cell_node)
+      row_node.xpath('./w:tc', XML_NAMESPACES).index(cell_node) || 0
+    end
+
+    def ensure_image_slot_in_cell(cell_node, slot_index)
+      drawings = cell_node.xpath('.//w:drawing', XML_NAMESPACES).to_a
+      while drawings.length <= slot_index
+        duplicate_image_slot_in_cell(cell_node)
+        drawings = cell_node.xpath('.//w:drawing', XML_NAMESPACES).to_a
+      end
+
+      drawing_node = drawings[slot_index]
+      return nil unless drawing_node
+
+      embed_attr = drawing_node.at_xpath('.//a:blip/@r:embed', XML_NAMESPACES)
+      return nil unless embed_attr
+
+      { cell: cell_node, embed_attr: embed_attr, drawing_node: drawing_node }
+    end
+
+    def duplicate_image_slot_in_cell(cell_node)
+      template_run = cell_node.at_xpath('.//w:r[w:drawing]', XML_NAMESPACES)
+      return nil unless template_run
+
+      target_paragraph = template_run.parent
+      target_paragraph.add_child(template_run.dup(1))
+    end
+
     def remove_placeholder_from_cell(cell, placeholder)
       cell.xpath('.//w:p', XML_NAMESPACES).each do |paragraph|
         text_nodes = paragraph.xpath('.//w:t', XML_NAMESPACES)
@@ -381,6 +490,21 @@ module Docx
 
         text_nodes.first.content = merged_text.gsub(placeholder, '')
         text_nodes.drop(1).each { |node| node.content = '' }
+      end
+    end
+
+    def remove_placeholder_from_row_nodes(row_nodes, placeholder)
+      row_nodes.each do |row|
+        row.xpath('.//w:p', XML_NAMESPACES).each do |paragraph|
+          text_nodes = paragraph.xpath('.//w:t', XML_NAMESPACES)
+          next if text_nodes.empty?
+
+          merged_text = text_nodes.map(&:text).join
+          next unless merged_text.include?(placeholder)
+
+          text_nodes.first.content = merged_text.gsub(placeholder, '')
+          text_nodes.drop(1).each { |node| node.content = '' }
+        end
       end
     end
 
@@ -509,6 +633,51 @@ module Docx
     def remove_src_rect(blip_fill_node)
       src_rect = blip_fill_node.at_xpath('./a:srcRect', XML_NAMESPACES)
       src_rect.remove if src_rect
+    end
+
+    def create_media_binding_for_slot(embed_attr, replacement_contents)
+      ext = extension_for_image_bytes(replacement_contents)
+      entry_path = next_generated_media_path(ext)
+      relationship_id = next_relationship_id
+
+      add_image_relationship(relationship_id, entry_path)
+      replace_entry(entry_path, replacement_contents)
+      embed_attr.value = relationship_id
+
+      { relationship_id: relationship_id, entry_path: entry_path }
+    end
+
+    def extension_for_image_bytes(bytes)
+      return 'png' if bytes.start_with?("\x89PNG\r\n\x1A\n".b)
+      return 'jpg' if bytes.start_with?("\xFF\xD8".b)
+
+      raise ArgumentError, 'Unsupported image format. Only PNG and JPEG are supported.'
+    end
+
+    def next_generated_media_path(ext)
+      existing = zip.glob("word/media/*").map(&:name) + @replace.keys
+      max_index = existing.filter_map do |name|
+        match = name.match(%r{\Aword/media/image_generated_(\d+)\.(png|jpg)\z})
+        match && match[1].to_i
+      end.max || 0
+      "word/media/image_generated_#{max_index + 1}.#{ext}"
+    end
+
+    def next_relationship_id
+      max_id = @rels.xpath('//xmlns:Relationship/@Id').filter_map do |attr|
+        match = attr.value.match(/\ArId(\d+)\z/)
+        match && match[1].to_i
+      end.max || 0
+      "rId#{max_id + 1}"
+    end
+
+    def add_image_relationship(relationship_id, entry_path)
+      relationships_node = @rels.at_xpath('/xmlns:Relationships')
+      relation = Nokogiri::XML::Node.new('Relationship', @rels)
+      relation['Id'] = relationship_id
+      relation['Type'] = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image'
+      relation['Target'] = entry_path.sub(%r{\Aword/}, '')
+      relationships_node.add_child(relation)
     end
   end
 end

@@ -706,6 +706,84 @@ describe Docx::Document do
     end
   end
 
+  describe 'batch replacing images by placeholder in table' do
+    let(:doc_xml) do
+      <<~XML
+        <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                    xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+                    xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+                    xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+                    xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+          <w:body>
+            <w:tbl>
+              <w:tr>
+                <w:tc>
+                  <w:p><w:r><w:t>{{photo_a}}</w:t></w:r></w:p>
+                  <w:p>
+                    <w:r>
+                      <w:drawing>
+                        <wp:inline>
+                          <wp:extent cx="1600" cy="900" />
+                          <a:graphic><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId5"/></pic:blipFill><pic:spPr><a:xfrm><a:ext cx="1600" cy="900" /></a:xfrm></pic:spPr></pic:pic></a:graphicData></a:graphic>
+                        </wp:inline>
+                      </w:drawing>
+                    </w:r>
+                  </w:p>
+                </w:tc>
+              </w:tr>
+            </w:tbl>
+          </w:body>
+        </w:document>
+      XML
+    end
+    let(:rels_xml) do
+      <<~XML
+        <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+          <Relationship Id="rId5" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image1.png" />
+        </Relationships>
+      XML
+    end
+    let(:zip) { instance_double(Zip::File) }
+    let(:doc) do
+      d = Docx::Document.allocate
+      d.instance_variable_set(:@replace, {})
+      d.instance_variable_set(:@doc, Nokogiri::XML(doc_xml))
+      d.instance_variable_set(:@rels, Nokogiri::XML(rels_xml))
+      d.instance_variable_set(:@zip, zip)
+      d
+    end
+
+    def fake_png(width, height)
+      "\x89PNG\r\n\x1A\n".b + "\x00\x00\x00\rIHDR".b + [width, height].pack('N2') + "\x08\x02\x00\x00\x00".b
+    end
+
+    it 'fills images in order and appends row when exceeding max per row' do
+      allow(zip).to receive(:glob).with('word/media/*').and_return([])
+
+      images = [
+        StringIO.new(fake_png(1000, 1000)),
+        StringIO.new(fake_png(1000, 1000)),
+        StringIO.new(fake_png(1000, 1000))
+      ]
+      result = doc.replace_images_by_placeholder_in_table('{{photo_a}}', images)
+
+      expect(result.size).to eq(3)
+      expect(result.map { |it| [it[:row_index], it[:slot_index]] }).to eq([[0, 0], [0, 1], [1, 0]])
+      expect(doc.doc.xpath('//w:tbl//w:tr', Docx::Document::XML_NAMESPACES).count).to eq(2)
+      expect(result.map { |it| it[:relationship_id] }).to eq(%w[rId6 rId7 rId8])
+
+      first_row_drawings = doc.doc.xpath('//w:tbl//w:tr[1]//w:tc[1]//w:drawing', Docx::Document::XML_NAMESPACES)
+      second_row_drawings = doc.doc.xpath('//w:tbl//w:tr[2]//w:tc[1]//w:drawing', Docx::Document::XML_NAMESPACES)
+      expect(first_row_drawings.count).to eq(2)
+      expect(second_row_drawings.count).to eq(1)
+
+      media_entries = doc.instance_variable_get(:@replace).keys.grep(%r{\Aword/media/image_generated_})
+      expect(media_entries.size).to eq(3)
+      text = doc.doc.xpath('//w:t', Docx::Document::XML_NAMESPACES).map(&:text).join
+      expect(text).not_to include('{{photo_a}}')
+    end
+  end
+
   describe '#to_s' do
     let(:doc) { Docx::Document.open(@fixtures_path + '/weird_docx.docx') }
 

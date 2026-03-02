@@ -165,6 +165,14 @@ end
 # fit: :stretch (default) | :cover | :contain
 doc.replace_image_by_placeholder_in_table('{{photo_a}}', 'replacement.png', fit: :cover)
 
+# Batch replace by a single placeholder anchored in a table cell.
+# Default max_images_per_row is 2 in the same cell; overflows append duplicated rows.
+doc.replace_images_by_placeholder_in_table(
+  '{{photo_a}}',
+  ['image-a.png', 'image-b.png', 'image-c.png'],
+  fit: :cover
+)
+
 doc.save('with-images-edited.docx')
 ```
 
