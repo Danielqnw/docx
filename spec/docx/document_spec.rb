@@ -782,6 +782,23 @@ describe Docx::Document do
       text = doc.doc.xpath('//w:t', Docx::Document::XML_NAMESPACES).map(&:text).join
       expect(text).not_to include('{{photo_a}}')
     end
+
+    it 'cleans up placeholder and placeholder image when given empty array' do
+      result = doc.replace_images_by_placeholder_in_table('{{photo_a}}', [])
+
+      expect(result).to eq([])
+      text = doc.doc.xpath('//w:t', Docx::Document::XML_NAMESPACES).map(&:text).join
+      expect(text).not_to include('{{photo_a}}')
+      drawings = doc.doc.xpath('//w:tbl//w:tr[1]//w:tc[1]//w:drawing', Docx::Document::XML_NAMESPACES)
+      expect(drawings.count).to eq(0)
+      expect(doc.doc.xpath('//w:tbl', Docx::Document::XML_NAMESPACES).count).to eq(1)
+      expect(doc.doc.xpath('//w:tbl//w:tr', Docx::Document::XML_NAMESPACES).count).to eq(1)
+    end
+
+    it 'returns empty array silently when placeholder does not exist and given empty array' do
+      result = doc.replace_images_by_placeholder_in_table('{{nonexistent}}', [])
+      expect(result).to eq([])
+    end
   end
 
   describe '#to_s' do

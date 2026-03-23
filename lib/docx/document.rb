@@ -268,16 +268,22 @@ module Docx
     #
     # Returns an array of placement hashes:
     #   [{ row_index: 0, slot_index: 0, relationship_id: "rId25", entry_path: "word/media/image_generated_1.png" }, ...]
-    def replace_images_by_placeholder_in_table(placeholder, replacement_sources, options = {})
-      replacement_sources = Array(replacement_sources)
-      raise ArgumentError, 'replacement_sources must not be empty' if replacement_sources.empty?
+    def replace_images_by_placeholder_in_table(placeholder, replacement_sources = [], options = {})
+      replacement_sources = Array(replacement_sources).compact
+
+      cleanup_placeholder = options.fetch(:cleanup_placeholder, true)
+
+      template_cell = find_table_cell_by_placeholder(placeholder)
+
+      if replacement_sources.empty?
+        cleanup_empty_placeholder_in_table(template_cell, placeholder) if template_cell && cleanup_placeholder
+        return []
+      end
 
       fit = normalize_fit_option(options.fetch(:fit, :stretch))
-      cleanup_placeholder = options.fetch(:cleanup_placeholder, true)
       max_images_per_row = options.fetch(:max_images_per_row, 2).to_i
       raise ArgumentError, 'max_images_per_row must be >= 1' if max_images_per_row < 1
 
-      template_cell = find_table_cell_by_placeholder(placeholder)
       raise Errors::ImagePlaceholderNotFound, "Placeholder not found in table cells: #{placeholder}" if template_cell.nil?
 
       template_row = template_cell.at_xpath('./ancestor::w:tr[1]', XML_NAMESPACES)
@@ -506,6 +512,11 @@ module Docx
           text_nodes.drop(1).each { |node| node.content = '' }
         end
       end
+    end
+
+    def cleanup_empty_placeholder_in_table(cell_node, placeholder)
+      remove_placeholder_from_cell(cell_node, placeholder)
+      cell_node.xpath('.//w:drawing', XML_NAMESPACES).each(&:remove)
     end
 
     def normalize_fit_option(fit)
