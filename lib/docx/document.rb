@@ -31,6 +31,7 @@ module Docx
       numbering: "word/numbering.xml"
     }
     IMAGE_FIT_MODES = %i[cover contain stretch].freeze
+    CM_TO_EMU = 360_000
     XML_NAMESPACES = {
       'w' => 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
       'a' => 'http://schemas.openxmlformats.org/drawingml/2006/main',
@@ -236,6 +237,8 @@ module Docx
     def replace_image_by_placeholder_in_table(placeholder, replacement_source, options = {})
       fit = normalize_fit_option(options.fetch(:fit, :stretch))
       cleanup_placeholder = options.fetch(:cleanup_placeholder, true)
+      width_cm = options[:width]
+      height_cm = options[:height]
 
       target_cell = find_table_cell_by_placeholder(placeholder)
       raise Errors::ImagePlaceholderNotFound, "Placeholder not found in table cells: #{placeholder}" if target_cell.nil?
@@ -250,7 +253,10 @@ module Docx
       replace_entry(image_entry_path, replacement_contents)
 
       drawing_node = target_cell.at_xpath(".//w:drawing[.//a:blip[@r:embed='#{rid}']]", XML_NAMESPACES)
-      apply_image_fit_to_drawing(drawing_node, fit, replacement_contents) if drawing_node && fit != :stretch
+      if drawing_node
+        apply_image_size_to_drawing(drawing_node, width_cm, height_cm, replacement_contents)
+        apply_image_fit_to_drawing(drawing_node, fit, replacement_contents) if fit != :stretch
+      end
       remove_placeholder_from_cell(target_cell, placeholder) if cleanup_placeholder
 
       {
@@ -280,11 +286,16 @@ module Docx
         return []
       end
 
+      raise Errors::ImagePlaceholderNotFound, "Placeholder not found in table cells: #{placeholder}" if template_cell.nil?
+
+      embed_attr = template_cell.at_xpath('.//a:blip/@r:embed', XML_NAMESPACES)
+      raise Errors::ImageNotFound, "No placeholder image found in the same cell as placeholder: #{placeholder}" if embed_attr.nil?
+
       fit = normalize_fit_option(options.fetch(:fit, :stretch))
+      width_cm = options[:width]
+      height_cm = options[:height]
       max_images_per_row = options.fetch(:max_images_per_row, 2).to_i
       raise ArgumentError, 'max_images_per_row must be >= 1' if max_images_per_row < 1
-
-      raise Errors::ImagePlaceholderNotFound, "Placeholder not found in table cells: #{placeholder}" if template_cell.nil?
 
       template_row = template_cell.at_xpath('./ancestor::w:tr[1]', XML_NAMESPACES)
       raise Errors::ImageNotFound, "No template row found for placeholder: #{placeholder}" if template_row.nil?
@@ -313,6 +324,7 @@ module Docx
 
         replacement_contents = read_replacement_source(replacement_source)
         generated = create_media_binding_for_slot(slot[:embed_attr], replacement_contents)
+        apply_image_size_to_drawing(slot[:drawing_node], width_cm, height_cm, replacement_contents)
         apply_image_fit_to_drawing(slot[:drawing_node], fit, replacement_contents) if fit != :stretch
 
         placements << {
@@ -524,6 +536,33 @@ module Docx
       return fit_value if IMAGE_FIT_MODES.include?(fit_value)
 
       raise ArgumentError, "fit must be one of: #{IMAGE_FIT_MODES.join(', ')}"
+    end
+
+    def apply_image_size_to_drawing(drawing_node, width_cm, height_cm, replacement_contents)
+      return unless width_cm || height_cm
+
+      wp_extent = drawing_node.at_xpath('.//wp:extent', XML_NAMESPACES)
+      xfrm_extent = drawing_node.at_xpath('.//pic:spPr/a:xfrm/a:ext', XML_NAMESPACES)
+      return unless wp_extent && xfrm_extent
+
+      source_width, source_height = image_size_from_bytes(replacement_contents)
+      source_ratio = source_width.to_f / source_height
+
+      if width_cm && height_cm
+        target_cx = (width_cm * CM_TO_EMU).round
+        target_cy = (height_cm * CM_TO_EMU).round
+      elsif width_cm
+        target_cx = (width_cm * CM_TO_EMU).round
+        target_cy = (target_cx / source_ratio).round
+      else
+        target_cy = (height_cm * CM_TO_EMU).round
+        target_cx = (target_cy * source_ratio).round
+      end
+
+      wp_extent['cx'] = target_cx.to_s
+      wp_extent['cy'] = target_cy.to_s
+      xfrm_extent['cx'] = target_cx.to_s
+      xfrm_extent['cy'] = target_cy.to_s
     end
 
     def apply_image_fit_to_drawing(drawing_node, fit, replacement_contents)
