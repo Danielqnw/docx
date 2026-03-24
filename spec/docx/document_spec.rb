@@ -704,6 +704,61 @@ describe Docx::Document do
       expect { doc.replace_image_by_placeholder_in_table('{{missing}}', StringIO.new('x')) }
         .to raise_error(Docx::Errors::ImagePlaceholderNotFound)
     end
+
+    context 'with width/height options' do
+      before { allow(zip).to receive(:find_entry).with('word/media/image1.png').and_return(true) }
+
+      it 'sets extent to explicit width and height in EMU' do
+        doc.replace_image_by_placeholder_in_table(
+          '{{photo_a}}', StringIO.new(fake_png(800, 400)),
+          width: 5.0, height: 3.0, cleanup_placeholder: false
+        )
+
+        wp_ext = doc.doc.at_xpath('//wp:extent', Docx::Document::XML_NAMESPACES)
+        xfrm_ext = doc.doc.at_xpath('//a:xfrm/a:ext', Docx::Document::XML_NAMESPACES)
+        expect(wp_ext['cx']).to eq((5.0 * 360_000).round.to_s)
+        expect(wp_ext['cy']).to eq((3.0 * 360_000).round.to_s)
+        expect(xfrm_ext['cx']).to eq(wp_ext['cx'])
+        expect(xfrm_ext['cy']).to eq(wp_ext['cy'])
+      end
+
+      it 'auto-calculates height from width and source aspect ratio' do
+        doc.replace_image_by_placeholder_in_table(
+          '{{photo_a}}', StringIO.new(fake_png(800, 400)),
+          width: 5.0, cleanup_placeholder: false
+        )
+
+        wp_ext = doc.doc.at_xpath('//wp:extent', Docx::Document::XML_NAMESPACES)
+        expected_cx = (5.0 * 360_000).round
+        expected_cy = (expected_cx / (800.0 / 400)).round
+        expect(wp_ext['cx']).to eq(expected_cx.to_s)
+        expect(wp_ext['cy']).to eq(expected_cy.to_s)
+      end
+
+      it 'auto-calculates width from height and source aspect ratio' do
+        doc.replace_image_by_placeholder_in_table(
+          '{{photo_a}}', StringIO.new(fake_png(800, 400)),
+          height: 3.0, cleanup_placeholder: false
+        )
+
+        wp_ext = doc.doc.at_xpath('//wp:extent', Docx::Document::XML_NAMESPACES)
+        expected_cy = (3.0 * 360_000).round
+        expected_cx = (expected_cy * (800.0 / 400)).round
+        expect(wp_ext['cx']).to eq(expected_cx.to_s)
+        expect(wp_ext['cy']).to eq(expected_cy.to_s)
+      end
+
+      it 'preserves placeholder extent when no width/height given' do
+        doc.replace_image_by_placeholder_in_table(
+          '{{photo_a}}', StringIO.new(fake_png(800, 400)),
+          cleanup_placeholder: false
+        )
+
+        wp_ext = doc.doc.at_xpath('//wp:extent', Docx::Document::XML_NAMESPACES)
+        expect(wp_ext['cx']).to eq('1600')
+        expect(wp_ext['cy']).to eq('900')
+      end
+    end
   end
 
   describe 'batch replacing images by placeholder in table' do
@@ -798,6 +853,54 @@ describe Docx::Document do
     it 'returns empty array silently when placeholder does not exist and given empty array' do
       result = doc.replace_images_by_placeholder_in_table('{{nonexistent}}', [])
       expect(result).to eq([])
+    end
+
+    context 'with width/height options' do
+      before { allow(zip).to receive(:glob).with('word/media/*').and_return([]) }
+
+      it 'applies explicit width and height to all slots' do
+        images = [StringIO.new(fake_png(800, 400)), StringIO.new(fake_png(800, 400))]
+        doc.replace_images_by_placeholder_in_table('{{photo_a}}', images, width: 4.0, height: 2.5)
+
+        expected_cx = (4.0 * 360_000).round.to_s
+        expected_cy = (2.5 * 360_000).round.to_s
+
+        doc.doc.xpath('//w:drawing//wp:extent', Docx::Document::XML_NAMESPACES).each do |ext|
+          expect(ext['cx']).to eq(expected_cx)
+          expect(ext['cy']).to eq(expected_cy)
+        end
+      end
+
+      it 'auto-calculates height when only width given' do
+        images = [StringIO.new(fake_png(800, 400))]
+        doc.replace_images_by_placeholder_in_table('{{photo_a}}', images, width: 6.0)
+
+        wp_ext = doc.doc.at_xpath('//w:tbl//w:tr[1]//w:drawing//wp:extent', Docx::Document::XML_NAMESPACES)
+        expected_cx = (6.0 * 360_000).round
+        expected_cy = (expected_cx / (800.0 / 400)).round
+        expect(wp_ext['cx']).to eq(expected_cx.to_s)
+        expect(wp_ext['cy']).to eq(expected_cy.to_s)
+      end
+
+      it 'auto-calculates width when only height given' do
+        images = [StringIO.new(fake_png(800, 400))]
+        doc.replace_images_by_placeholder_in_table('{{photo_a}}', images, height: 3.0)
+
+        wp_ext = doc.doc.at_xpath('//w:tbl//w:tr[1]//w:drawing//wp:extent', Docx::Document::XML_NAMESPACES)
+        expected_cy = (3.0 * 360_000).round
+        expected_cx = (expected_cy * (800.0 / 400)).round
+        expect(wp_ext['cx']).to eq(expected_cx.to_s)
+        expect(wp_ext['cy']).to eq(expected_cy.to_s)
+      end
+
+      it 'preserves placeholder extent when no width/height given' do
+        images = [StringIO.new(fake_png(800, 400))]
+        doc.replace_images_by_placeholder_in_table('{{photo_a}}', images)
+
+        wp_ext = doc.doc.at_xpath('//w:tbl//w:tr[1]//w:drawing//wp:extent', Docx::Document::XML_NAMESPACES)
+        expect(wp_ext['cx']).to eq('1600')
+        expect(wp_ext['cy']).to eq('900')
+      end
     end
   end
 

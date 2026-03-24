@@ -163,14 +163,28 @@ end
 
 # Replace by placeholder text in a table cell.
 # fit: :stretch (default) | :cover | :contain
+# width / height: output dimensions in cm (optional, auto-calculates the other if only one given)
 doc.replace_image_by_placeholder_in_table('{{photo_a}}', 'replacement.png', fit: :cover)
+
+# Specify output size explicitly (5 cm x 3 cm)
+doc.replace_image_by_placeholder_in_table(
+  '{{photo_a}}', 'replacement.png',
+  width: 5.0, height: 3.0, fit: :cover
+)
+
+# Only width given — height is auto-calculated from the source image's aspect ratio
+doc.replace_image_by_placeholder_in_table(
+  '{{photo_a}}', 'replacement.png',
+  width: 5.0
+)
 
 # Batch replace by a single placeholder anchored in a table cell.
 # Default max_images_per_row is 2 in the same cell; overflows append duplicated rows.
+# width / height also supported here, applied to every image slot.
 doc.replace_images_by_placeholder_in_table(
   '{{photo_a}}',
   ['image-a.png', 'image-b.png', 'image-c.png'],
-  fit: :cover
+  width: 5.0, height: 3.0, fit: :cover
 )
 
 doc.save('with-images-edited.docx')
