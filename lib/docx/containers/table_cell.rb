@@ -14,12 +14,13 @@ module Docx
           'tc'
         end
 
-        def initialize(node, grid_slot: nil, logical_row: nil, logical_col: nil)
+        def initialize(node, grid_slot: nil, logical_row: nil, logical_col: nil, table: nil)
           @node = node
           @properties_tag = 'tcPr'
           @grid_slot = grid_slot
           @logical_row = logical_row
           @logical_col = logical_col
+          @table = table
         end
 
         # Return text of paragraph's cell
@@ -62,9 +63,7 @@ module Docx
         end
 
         def unmerge!
-          unless merge_anchor?
-            raise Docx::Errors::InvalidMergeTarget
-          end
+          raise Docx::Errors::InvalidMergeTarget unless merge_anchor?
 
           slot = resolved_grid_slot
           raise Docx::Errors::InvalidMergeTarget unless slot
@@ -74,12 +73,10 @@ module Docx
             raise Docx::Errors::InvalidMergeTarget
           end
 
-          table_node = @node.at_xpath('ancestor::w:tbl')
-          raise Docx::Errors::InvalidMergeTarget unless table_node
+          owner = @table || owner_table_from_ancestor
+          raise Docx::Errors::InvalidMergeTarget unless owner
 
-          require 'docx/containers/table'
-          table = Containers::Table.new(table_node)
-          table.unmerge_cells(slot.row, slot.col)
+          owner.unmerge_cells(slot.row, slot.col)
         end
 
         alias_method :text, :to_s
@@ -117,6 +114,14 @@ module Docx
 
           grid = Containers::TableGrid.new(table_node)
           grid.each_anchor.find { |anchor| anchor.node == @node }
+        end
+
+        def owner_table_from_ancestor
+          table_node = @node.at_xpath('ancestor::w:tbl')
+          return nil unless table_node
+
+          require 'docx/containers/table'
+          Containers::Table.new(table_node)
         end
       end
     end

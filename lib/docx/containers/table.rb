@@ -12,12 +12,6 @@ module Docx
         include Elements::Element
         include TableMerge
 
-        @grid_generations = Hash.new(0)
-
-        class << self
-          attr_reader :grid_generations
-        end
-
         def self.tag
           'tbl'
         end
@@ -25,7 +19,6 @@ module Docx
         def initialize(node)
           @node = node
           @properties_tag = 'tblGrid'
-          @grid_generation = nil
         end
 
         # Array of row
@@ -53,14 +46,14 @@ module Docx
           slot = grid.cell_at(row, col)
           return nil if slot.nil?
 
-          Containers::TableCell.new(slot.node, grid_slot: slot, logical_row: row, logical_col: col)
+          Containers::TableCell.new(slot.node, grid_slot: slot, logical_row: row, logical_col: col, table: self)
         end
 
         def each_cell
           return enum_for(:each_cell) unless block_given?
 
           grid.each_anchor do |anchor|
-            yield(Containers::TableCell.new(anchor.node, grid_slot: anchor), anchor.row, anchor.col)
+            yield(Containers::TableCell.new(anchor.node, grid_slot: anchor, table: self), anchor.row, anchor.col)
           end
         end
 
@@ -73,7 +66,6 @@ module Docx
 
         def invalidate_grid!
           @grid = nil
-          self.class.grid_generations[@node.object_id] += 1
         end
 
         # Iterate over each row within a table
@@ -84,12 +76,6 @@ module Docx
         private
 
         def grid
-          current_generation = self.class.grid_generations[@node.object_id]
-          if @grid_generation != current_generation
-            @grid = nil
-            @grid_generation = current_generation
-          end
-
           @grid ||= Containers::TableGrid.new(@node)
         end
       end
