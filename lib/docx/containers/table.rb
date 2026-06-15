@@ -1,6 +1,7 @@
 require 'docx/containers/table_row'
 require 'docx/containers/table_column'
 require 'docx/containers/table_grid'
+require 'docx/containers/table_merge'
 require 'docx/containers/container'
 
 module Docx
@@ -9,6 +10,7 @@ module Docx
       class Table
         include Container
         include Elements::Element
+        include TableMerge
 
         def self.tag
           'tbl'
