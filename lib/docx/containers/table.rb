@@ -44,15 +44,22 @@ module Docx
           slot = grid.cell_at(row, col)
           return nil if slot.nil?
 
-          Containers::TableCell.new(slot.node)
+          Containers::TableCell.new(slot.node, grid_slot: slot)
         end
 
         def each_cell
           return enum_for(:each_cell) unless block_given?
 
           grid.each_anchor do |anchor|
-            yield(Containers::TableCell.new(anchor.node), anchor.row, anchor.col)
+            yield(Containers::TableCell.new(anchor.node, grid_slot: anchor), anchor.row, anchor.col)
           end
+        end
+
+        def merged?(row, col)
+          slot = grid.cell_at(row, col)
+          return false if slot.nil?
+
+          slot.colspan > 1 || slot.rowspan > 1
         end
 
         def invalidate_grid!
