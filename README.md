@@ -5,7 +5,7 @@
 [![Coverage Status](https://coveralls.io/repos/github/ruby-docx/docx/badge.svg?branch=master)](https://coveralls.io/github/ruby-docx/docx?branch=master)
 [![Gitter](https://badges.gitter.im/ruby-docx/community.svg)](https://gitter.im/ruby-docx/community?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge)
 
-A ruby library/gem for interacting with `.docx` files. currently capabilities include reading paragraphs/bookmarks, inserting text at bookmarks, reading tables/rows/columns/cells and saving the document.
+A ruby library/gem for interacting with `.docx` files. currently capabilities include reading paragraphs/bookmarks, inserting text at bookmarks, reading tables/rows/columns/cells, merging/splitting table cells, and saving the document.
 
 ## Usage
 
@@ -169,6 +169,50 @@ doc.tables.each do |table|
 end
 
 doc.save('tables-edited.docx')
+```
+
+### Merging cells
+
+``` ruby
+require 'docx'
+
+doc = Docx::Document.open('tables.docx')
+table = doc.tables[0]
+
+# Logical grid coordinates (rows/cols are zero-based)
+cell = table.cell_at(1, 2)
+puts cell.text if cell
+
+puts table.merged?(0, 0) # whether this coordinate is part of a merged region
+
+table.each_cell do |cell, row, col|
+  puts "#{row},#{col}: #{cell.text} (colspan=#{cell.colspan}, rowspan=#{cell.rowspan})"
+  puts "  anchor: #{cell.merge_anchor?}, continuation: #{cell.merge_continuation?}"
+end
+
+# Physical access (rows[i].cells[j]) follows actual w:tc elements in each row.
+# Logical access (cell_at(row, col)) follows the logical grid; merged regions
+# share one anchor cell, and any coordinate within a merge returns that anchor.
+
+# Merge a rectangular region (inclusive bounds); content is kept in the top-left anchor
+table.merge_cells(0, 0, 1, 1)
+
+# Raises Docx::Errors::InvalidMergeRange if out of bounds or row0/col0 > row1/col1
+# Raises Docx::Errors::MergeConflict if the range overlaps an existing merge
+
+# Unmerge from the anchor coordinate (no-op on an unmerged anchor)
+table.unmerge_cells(0, 0)
+# Raises Docx::Errors::InvalidMergeTarget for non-anchor coordinates
+
+anchor = table.cell_at(0, 0)
+anchor.unmerge! if anchor&.merge_anchor?
+# Raises Docx::Errors::InvalidMergeTarget on non-anchor or unmerged cells
+
+# Merge/unmerge does not change row_count or column_count (tblGrid is unchanged)
+puts table.row_count
+puts table.column_count
+
+doc.save('merged.docx')
 ```
 
 ### Advanced
