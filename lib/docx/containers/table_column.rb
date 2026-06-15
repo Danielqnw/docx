@@ -12,10 +12,10 @@ module Docx
           'w:gridCol'
         end
 
-        def initialize(cell_nodes)
+        def initialize(cells)
           @node = ''
           @properties_tag = ''
-          @cells = cell_nodes.map { |c_node| Containers::TableCell.new(c_node) }
+          @cells = cells
         end
 
         # Array of cells contained within row
