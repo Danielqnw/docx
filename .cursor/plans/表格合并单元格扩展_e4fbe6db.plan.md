@@ -4,25 +4,25 @@ overview: 为 docx gem 新增表格逻辑网格与合并/拆分 API，修正 Tab
 todos:
   - id: phase0-prereq
     content: "Phase 0: 验证 Document#save round-trip + fixture 生成脚本"
-    status: pending
+    status: completed
   - id: phase1-grid
     content: "Phase 1: 实现 TableGrid(占位存anchor引用) + 修正 Table#columns + grid spec + merge fixtures"
-    status: pending
+    status: completed
   - id: phase2-read
     content: "Phase 2: TableCell 合并读属性 + table_merge_read_spec"
-    status: pending
+    status: completed
   - id: phase3-h-merge
     content: "Phase 3: table_merge.rb 横向 merge + plain_3x3 fixture + write spec"
-    status: pending
+    status: completed
   - id: phase4-rect-merge
     content: "Phase 4: 矩形 merge + vMerge + MergeConflict + round-trip tests"
-    status: pending
+    status: completed
   - id: phase5-unmerge
     content: "Phase 5: unmerge_cells / unmerge! + table_unmerge_spec"
-    status: pending
+    status: completed
   - id: phase6-docs
     content: "Phase 6: README + CHANGELOG + version 0.11.0"
-    status: pending
+    status: completed
 isProject: false
 ---
 
