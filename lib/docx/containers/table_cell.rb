@@ -1,3 +1,4 @@
+require 'docx/errors'
 require 'docx/containers/text_run'
 require 'docx/containers/container'
 require 'docx/containers/table_grid'
@@ -13,10 +14,12 @@ module Docx
           'tc'
         end
 
-        def initialize(node, grid_slot: nil)
+        def initialize(node, grid_slot: nil, logical_row: nil, logical_col: nil)
           @node = node
           @properties_tag = 'tcPr'
           @grid_slot = grid_slot
+          @logical_row = logical_row
+          @logical_col = logical_col
         end
 
         # Return text of paragraph's cell
@@ -56,6 +59,27 @@ module Docx
 
         def merge_continuation?
           vmerge_state == :continue
+        end
+
+        def unmerge!
+          unless merge_anchor?
+            raise Docx::Errors::InvalidMergeTarget
+          end
+
+          slot = resolved_grid_slot
+          raise Docx::Errors::InvalidMergeTarget unless slot
+
+          if !@logical_row.nil? &&
+             (@logical_row != slot.row || @logical_col != slot.col)
+            raise Docx::Errors::InvalidMergeTarget
+          end
+
+          table_node = @node.at_xpath('ancestor::w:tbl')
+          raise Docx::Errors::InvalidMergeTarget unless table_node
+
+          require 'docx/containers/table'
+          table = Containers::Table.new(table_node)
+          table.unmerge_cells(slot.row, slot.col)
         end
 
         alias_method :text, :to_s

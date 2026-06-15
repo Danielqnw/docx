@@ -19,6 +19,36 @@ module Docx
           end
         end
 
+        def unmerge_cells(row, col)
+          slot = grid.slots[row][col]
+          raise Docx::Errors::InvalidMergeTarget if slot.nil?
+
+          anchor = slot.anchor
+          if anchor.row != row || anchor.col != col
+            raise Docx::Errors::InvalidMergeTarget
+          end
+
+          return if anchor.colspan == 1 && anchor.rowspan == 1
+
+          r0 = anchor.row
+          c0 = anchor.col
+          height = anchor.rowspan
+          width = anchor.colspan
+
+          (r0...(r0 + height)).each do |r|
+            tc = physical_tc_at(r, c0)
+
+            if width > 1
+              remove_grid_span(tc)
+              insert_blank_cells_after(tc, width - 1)
+            end
+
+            remove_vmerge(tc)
+          end
+
+          invalidate_grid!
+        end
+
         private
 
         def validate_merge_range!(row0, col0, row1, col1)
@@ -99,8 +129,16 @@ module Docx
         end
 
         def physical_tc_at(row, col)
-          slot = grid.slots[row]&.[](col)
-          slot&.node
+          col_pos = 0
+          tr_node = @node.xpath('w:tr')[row]
+
+          tr_node.xpath('w:tc').each do |tc|
+            return tc if col_pos == col
+
+            col_pos += read_grid_span(tc)
+          end
+
+          nil
         end
 
         def ensure_continuation_cell!(row, col)
@@ -186,6 +224,33 @@ module Docx
 
         def set_w_val(node, value)
           node['w:val'] = value.to_s
+        end
+
+        def remove_grid_span(tc)
+          tc.at_xpath('w:tcPr/w:gridSpan')&.remove
+        end
+
+        def remove_vmerge(tc)
+          tc.at_xpath('w:tcPr/w:vMerge')&.remove
+        end
+
+        def insert_blank_cells_after(tc, count)
+          insert_after = tc
+
+          count.times do
+            new_tc = blank_tc_node(tc.document)
+            insert_after.add_next_sibling(new_tc)
+            insert_after = new_tc
+          end
+        end
+
+        def blank_tc_node(document)
+          new_tc = Nokogiri::XML::Node.new('w:tc', document)
+          tc_pr = Nokogiri::XML::Node.new('w:tcPr', document)
+          paragraph = Nokogiri::XML::Node.new('w:p', document)
+          new_tc.add_child(tc_pr)
+          new_tc.add_child(paragraph)
+          new_tc
         end
       end
     end
