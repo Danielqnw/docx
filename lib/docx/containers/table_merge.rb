@@ -1,4 +1,5 @@
 require 'docx/errors'
+require 'docx/containers/table_cell'
 
 module Docx
   module Elements
@@ -9,11 +10,13 @@ module Docx
 
           return if row0 == row1 && col0 == col1
 
-          if row0 != row1
-            raise NotImplementedError, 'vertical and rectangular merge not yet implemented'
-          end
+          detect_merge_overlap!(row0, col0, row1, col1)
 
-          merge_cells_horizontal(row0, col0, col1)
+          if row0 == row1
+            merge_cells_horizontal(row0, col0, col1)
+          else
+            merge_cells_rectangular(row0, col0, row1, col1)
+          end
         end
 
         private
@@ -27,7 +30,49 @@ module Docx
           end
         end
 
+        def detect_merge_overlap!(row0, col0, row1, col1)
+          (row0..row1).each do |row|
+            (col0..col1).each do |col|
+              slot = grid.slots[row][col]
+              next if slot.nil?
+
+              anchor = slot.anchor
+              next unless anchor.colspan > 1 || anchor.rowspan > 1
+
+              raise Docx::Errors::MergeConflict,
+                    "merge range (#{row0},#{col0})..(#{row1},#{col1}) overlaps existing merge"
+            end
+          end
+        end
+
         def merge_cells_horizontal(row, col0, col1)
+          apply_horizontal_span_in_row(row, col0, col1)
+          invalidate_grid!
+        end
+
+        def merge_cells_rectangular(row0, col0, row1, col1)
+          (row0..row1).each do |row|
+            apply_horizontal_span_in_row(row, col0, col1) if col1 > col0
+          end
+
+          invalidate_grid!
+
+          (row0..row1).each do |row|
+            ensure_continuation_cell!(row, col0)
+            tc_node = physical_tc_at(row, col0)
+
+            if row == row0
+              set_vmerge(tc_node, :restart)
+            else
+              set_vmerge(tc_node, :continue)
+              Containers::TableCell.new(tc_node).blank!
+            end
+          end
+
+          invalidate_grid!
+        end
+
+        def apply_horizontal_span_in_row(row, col0, col1)
           logical_width = col1 - col0 + 1
           tc_nodes = physical_tc_nodes_in_row_range(row, col0, col1)
 
@@ -35,8 +80,6 @@ module Docx
           set_grid_span(anchor_node, logical_width)
 
           tc_nodes.drop(1).each(&:remove)
-
-          invalidate_grid!
         end
 
         def physical_tc_nodes_in_row_range(row, col0, col1)
@@ -53,6 +96,49 @@ module Docx
           end
 
           nodes
+        end
+
+        def physical_tc_at(row, col)
+          slot = grid.slots[row]&.[](col)
+          slot&.node
+        end
+
+        def ensure_continuation_cell!(row, col)
+          return if physical_tc_at(row, col)
+
+          tr_node = @node.xpath('w:tr')[row]
+          insert_index = physical_insert_index_for_col(row, col)
+
+          new_tc = Nokogiri::XML::Node.new('w:tc', tr_node.document)
+          tc_pr = Nokogiri::XML::Node.new('w:tcPr', tr_node.document)
+          paragraph = Nokogiri::XML::Node.new('w:p', tr_node.document)
+          new_tc.add_child(tc_pr)
+          new_tc.add_child(paragraph)
+
+          existing_tcs = tr_node.xpath('w:tc')
+          if insert_index >= existing_tcs.length
+            tr_node.add_child(new_tc)
+          else
+            existing_tcs[insert_index].add_previous_sibling(new_tc)
+          end
+        end
+
+        def physical_insert_index_for_col(row, target_col)
+          col = 0
+          tr_node = @node.xpath('w:tr')[row]
+
+          tr_node.xpath('w:tc').each_with_index do |tc, idx|
+            return idx if col == target_col
+
+            col += read_grid_span(tc)
+          end
+
+          tr_node.xpath('w:tc').length
+        end
+
+        def read_grid_span(tc_node)
+          val = tc_node.at_xpath('w:tcPr/w:gridSpan/@w:val')&.value
+          val ? val.to_i : 1
         end
 
         def ensure_tc_pr!(tc_node)
@@ -74,6 +160,27 @@ module Docx
             grid_span = Nokogiri::XML::Node.new('w:gridSpan', tc_node.document)
             set_w_val(grid_span, n)
             tc_pr.add_child(grid_span)
+          end
+        end
+
+        def set_vmerge(tc_node, mode)
+          tc_pr = ensure_tc_pr!(tc_node)
+          vmerge = tc_pr.at_xpath('w:vMerge')
+
+          if vmerge
+            update_vmerge_node(vmerge, mode)
+          else
+            vmerge = Nokogiri::XML::Node.new('w:vMerge', tc_node.document)
+            update_vmerge_node(vmerge, mode)
+            tc_pr.add_child(vmerge)
+          end
+        end
+
+        def update_vmerge_node(vmerge_node, mode)
+          if mode == :restart
+            set_w_val(vmerge_node, 'restart')
+          else
+            vmerge_node.remove_attribute('w:val')
           end
         end
 
