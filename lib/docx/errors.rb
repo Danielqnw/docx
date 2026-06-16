@@ -6,5 +6,7 @@ module Docx
     InvalidMergeRange = Class.new(ArgumentError)
     MergeConflict = Class.new(StandardError)
     InvalidMergeTarget = Class.new(ArgumentError)
+    ImageNotFound = Class.new(StandardError)
+    ImagePlaceholderNotFound = Class.new(StandardError)
   end
 end

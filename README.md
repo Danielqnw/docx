@@ -142,6 +142,54 @@ end
 doc.save('example-edited.docx')
 ```
 
+### Replacing images
+
+```ruby
+require 'docx'
+
+doc = Docx::Document.open('with-images.docx')
+
+# Inspect image relationship IDs mapped to archive paths
+# => { "rId5" => "word/media/image1.png", ... }
+pp doc.images
+
+# Replace by relationship ID using a file path
+doc.replace_image('rId5', 'replacement.png')
+
+# Replace by entry path using an IO object
+File.open('replacement.png', 'rb') do |io|
+  doc.replace_image('word/media/image1.png', io)
+end
+
+# Replace by placeholder text in a table cell.
+# fit: :stretch (default) | :cover | :contain
+# width / height: output dimensions in cm (optional, auto-calculates the other if only one given)
+doc.replace_image_by_placeholder_in_table('{{photo_a}}', 'replacement.png', fit: :cover)
+
+# Specify output size explicitly (5 cm x 3 cm)
+doc.replace_image_by_placeholder_in_table(
+  '{{photo_a}}', 'replacement.png',
+  width: 5.0, height: 3.0, fit: :cover
+)
+
+# Only width given — height is auto-calculated from the source image's aspect ratio
+doc.replace_image_by_placeholder_in_table(
+  '{{photo_a}}', 'replacement.png',
+  width: 5.0
+)
+
+# Batch replace by a single placeholder anchored in a table cell.
+# Default max_images_per_row is 2 in the same cell; overflows append duplicated rows.
+# width / height also supported here, applied to every image slot.
+doc.replace_images_by_placeholder_in_table(
+  '{{photo_a}}',
+  ['image-a.png', 'image-b.png', 'image-c.png'],
+  width: 5.0, height: 3.0, fit: :cover
+)
+
+doc.save('with-images-edited.docx')
+```
+
 ### Writing to tables
 
 ``` ruby
