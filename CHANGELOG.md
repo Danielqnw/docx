@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.11.0
+
+### Enhancements
+
+- Add logical-grid table APIs for reading and writing merged cells:
+  - `Table#cell_at(row, col)` — logical coordinate lookup (any coordinate within a merge returns the top-left anchor cell; out of bounds returns `nil`)
+  - `Table#each_cell` — iterate each anchor cell once with logical coordinates
+  - `Table#merged?(row, col)` — whether a coordinate belongs to a merged region
+  - `Table#merge_cells(row0, col0, row1, col1)` — merge a rectangular range (inclusive); single-cell ranges are a no-op
+  - `Table#unmerge_cells(row, col)` — split from the anchor cell; no-op on an unmerged anchor
+  - `TableCell#colspan`, `#rowspan`, `#merged?`, `#merge_anchor?`, `#merge_continuation?` — merge read attributes
+  - `TableCell#unmerge!` — split via the parent table
+- Add `Docx::Errors::InvalidMergeRange`, `MergeConflict`, and `InvalidMergeTarget` for invalid merge/unmerge operations
+- Merge and unmerge are round-trip safe on save/reopen; `row_count` and `column_count` are unchanged
+
+### Bug fixes
+
+- Fix `Table#columns` returning misaligned cells in tables with merged cells
+- Fix `Table#columns` incorrectly including nested table `w:tc` elements; columns are now built from the logical grid with child-axis positioning
+- `columns[col].cells[row]` now equals `cell_at(row, col)`; this may break code that relied on the previous (incorrect) behavior
+
 ## v0.7.0
 
 ### Enhancements

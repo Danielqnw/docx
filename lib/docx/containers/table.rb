@@ -1,5 +1,7 @@
 require 'docx/containers/table_row'
 require 'docx/containers/table_column'
+require 'docx/containers/table_grid'
+require 'docx/containers/table_merge'
 require 'docx/containers/container'
 
 module Docx
@@ -8,6 +10,7 @@ module Docx
       class Table
         include Container
         include Elements::Element
+        include TableMerge
 
         def self.tag
           'tbl'
@@ -29,22 +32,52 @@ module Docx
 
         # Array of column
         def columns
-          columns_containers = []
-          (0..(column_count-1)).each do |i|
-            columns_containers[i] = Containers::TableColumn.new @node.xpath("w:tr//w:tc[#{i+1}]")
+          (0...column_count).map do |col|
+            cells = (0...row_count).map { |row| cell_at(row, col) }
+            Containers::TableColumn.new(cells)
           end
-          columns_containers
         end
 
         def column_count
           @node.xpath('w:tblGrid/w:gridCol').count
         end
 
+        def cell_at(row, col)
+          slot = grid.cell_at(row, col)
+          return nil if slot.nil?
+
+          Containers::TableCell.new(slot.node, grid_slot: slot, logical_row: row, logical_col: col, table: self)
+        end
+
+        def each_cell
+          return enum_for(:each_cell) unless block_given?
+
+          grid.each_anchor do |anchor|
+            yield(Containers::TableCell.new(anchor.node, grid_slot: anchor, table: self), anchor.row, anchor.col)
+          end
+        end
+
+        def merged?(row, col)
+          slot = grid.cell_at(row, col)
+          return false if slot.nil?
+
+          slot.colspan > 1 || slot.rowspan > 1
+        end
+
+        def invalidate_grid!
+          @grid = nil
+        end
+
         # Iterate over each row within a table
         def each_rows
           rows.each { |r| yield(r) }
         end
-        
+
+        private
+
+        def grid
+          @grid ||= Containers::TableGrid.new(@node)
+        end
       end
     end
   end
