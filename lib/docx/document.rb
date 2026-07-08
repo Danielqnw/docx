@@ -253,41 +253,56 @@ module Docx
       replace_entry(image_entry_path, read_replacement_source(replacement_source))
     end
 
+    # Replace an existing image located by placeholder text in any paragraph.
+    #
+    # The search host is the paragraph containing the placeholder, or its table cell
+    # ancestor when the paragraph lives inside a cell (image may be in another paragraph
+    # within the same cell).
+    #
+    # Options:
+    #   fit: :cover | :contain | :stretch (default: :stretch)
+    #   cleanup_placeholder: true | false (default: true)
+    #   width: width in cm
+    #   height: height in cm
+    def replace_image_by_placeholder(placeholder, replacement_source, options = {})
+      paragraph = find_paragraph_by_placeholder(placeholder)
+      raise Errors::ImagePlaceholderNotFound, "Placeholder not found: #{placeholder}" if paragraph.nil?
+
+      host = paragraph.at_xpath('./ancestor::w:tc[1]', XML_NAMESPACES) || paragraph
+      cleanup_kind = host.name == 'tc' ? :cell : :paragraph
+      image_not_found_message = if cleanup_kind == :cell
+                                  "No image found in the same cell as placeholder: #{placeholder}"
+                                else
+                                  "No image found in the same paragraph as placeholder: #{placeholder}"
+                                end
+
+      replace_image_within_host(
+        host,
+        placeholder,
+        replacement_source,
+        options,
+        cleanup_kind: cleanup_kind,
+        image_not_found_message: image_not_found_message
+      )
+    end
+
     # Replace an image located by placeholder text in a table cell.
     #
     # Options:
     #   fit: :cover | :contain | :stretch (default: :stretch)
     #   cleanup_placeholder: true | false (default: true)
     def replace_image_by_placeholder_in_table(placeholder, replacement_source, options = {})
-      fit = normalize_fit_option(options.fetch(:fit, :stretch))
-      cleanup_placeholder = options.fetch(:cleanup_placeholder, true)
-      width_cm = options[:width]
-      height_cm = options[:height]
-
       target_cell = find_table_cell_by_placeholder(placeholder)
       raise Errors::ImagePlaceholderNotFound, "Placeholder not found in table cells: #{placeholder}" if target_cell.nil?
 
-      embed_attr = target_cell.at_xpath('.//a:blip/@r:embed', XML_NAMESPACES)
-      raise Errors::ImageNotFound, "No image found in the same cell as placeholder: #{placeholder}" if embed_attr.nil?
-
-      rid = embed_attr.value
-      image_entry_path = resolve_image_entry_path(rid)
-      replacement_contents = read_replacement_source(replacement_source)
-
-      replace_entry(image_entry_path, replacement_contents)
-
-      drawing_node = target_cell.at_xpath(".//w:drawing[.//a:blip[@r:embed='#{rid}']]", XML_NAMESPACES)
-      if drawing_node
-        apply_image_size_to_drawing(drawing_node, width_cm, height_cm, replacement_contents)
-        apply_image_fit_to_drawing(drawing_node, fit, replacement_contents) if fit != :stretch
-      end
-      remove_placeholder_from_cell(target_cell, placeholder) if cleanup_placeholder
-
-      {
-        relationship_id: rid,
-        entry_path: image_entry_path,
-        fit: fit
-      }
+      replace_image_within_host(
+        target_cell,
+        placeholder,
+        replacement_source,
+        options,
+        cleanup_kind: :cell,
+        image_not_found_message: "No image found in the same cell as placeholder: #{placeholder}"
+      )
     end
 
     # Batch replacement for a single placeholder anchored in table cell.
@@ -546,6 +561,43 @@ module Docx
       else
         raise ArgumentError, "replacement_source must be an IO-like object or an existing file path"
       end
+    end
+
+    def replace_image_within_host(host_node, placeholder, replacement_source, options, cleanup_kind:, image_not_found_message:)
+      fit = normalize_fit_option(options.fetch(:fit, :stretch))
+      cleanup_placeholder = options.fetch(:cleanup_placeholder, true)
+      width_cm = options[:width]
+      height_cm = options[:height]
+
+      embed_attr = host_node.at_xpath('.//a:blip/@r:embed', XML_NAMESPACES)
+      raise Errors::ImageNotFound, image_not_found_message if embed_attr.nil?
+
+      rid = embed_attr.value
+      image_entry_path = resolve_image_entry_path(rid)
+      replacement_contents = read_replacement_source(replacement_source)
+
+      replace_entry(image_entry_path, replacement_contents)
+
+      drawing_node = host_node.at_xpath(".//w:drawing[.//a:blip[@r:embed='#{rid}']]", XML_NAMESPACES)
+      if drawing_node
+        apply_image_size_to_drawing(drawing_node, width_cm, height_cm, replacement_contents)
+        apply_image_fit_to_drawing(drawing_node, fit, replacement_contents) if fit != :stretch
+      end
+
+      if cleanup_placeholder
+        case cleanup_kind
+        when :cell
+          remove_placeholder_from_cell(host_node, placeholder)
+        when :paragraph
+          remove_placeholder_from_paragraph(host_node, placeholder)
+        end
+      end
+
+      {
+        relationship_id: rid,
+        entry_path: image_entry_path,
+        fit: fit
+      }
     end
 
     def find_table_cell_by_placeholder(placeholder)
