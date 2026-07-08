@@ -5,6 +5,7 @@ module Docx #:nodoc:
 
   module Merge
     autoload :StylesImporter, 'docx/merge/styles_importer'
+    autoload :NumberingImporter, 'docx/merge/numbering_importer'
   end
 end
 
