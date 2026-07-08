@@ -432,6 +432,39 @@ module Docx
       placements
     end
 
+    # Toggle a character-based checkbox glyph within the paragraph containing +locator+.
+    #
+    #   set_checkbox('选项A', checked: true)
+    #   set_checkbox('[ ]', checked: true, unchecked_glyph: '[ ]', checked_glyph: '[x]')
+    def set_checkbox(locator, checked: true, checked_glyph: "\u2611", unchecked_glyph: "\u2610")
+      paragraph = find_paragraph_by_placeholder(locator)
+      raise Errors::ImagePlaceholderNotFound, "Checkbox locator not found: #{locator}" if paragraph.nil?
+
+      from_glyph = checked ? unchecked_glyph : checked_glyph
+      to_glyph = checked ? checked_glyph : unchecked_glyph
+
+      paragraph.xpath('.//w:t', XML_NAMESPACES).each do |text_node|
+        text_node.content = text_node.content.gsub(from_glyph, to_glyph)
+      end
+
+      true
+    end
+
+    # Set a Word content-control checkbox (w:sdt + w14:checkbox) by tag or alias.
+    #
+    #   check_content_control('opt_a', checked: true)
+    def check_content_control(tag_or_alias, checked: true)
+      namespaces = xml_namespaces_with_w14
+      sdt = find_content_control_checkbox(tag_or_alias, namespaces)
+      raise Errors::ImagePlaceholderNotFound, "Content control checkbox not found: #{tag_or_alias}" if sdt.nil?
+
+      checkbox = sdt.at_xpath('.//w14:checkbox', namespaces)
+      set_content_control_checked_state(checkbox, checked, namespaces)
+      sync_content_control_checkbox_glyph(sdt, checkbox, checked, namespaces)
+
+      true
+    end
+
     def default_paragraph_style
       @styles.at_xpath("w:styles/w:style[@w:type='paragraph' and @w:default='1']/w:name/@w:val").value
     end
@@ -612,6 +645,70 @@ module Docx
         text = paragraph.xpath('.//w:t', XML_NAMESPACES).map(&:text).join
         text.include?(placeholder)
       end
+    end
+
+    W14_NS = 'http://schemas.microsoft.com/office/word/2010/wordml'
+
+    def xml_namespaces_with_w14
+      XML_NAMESPACES.merge('w14' => W14_NS)
+    end
+
+    def find_content_control_checkbox(tag_or_alias, namespaces)
+      doc.xpath('//w:sdt', namespaces).find do |sdt|
+        sdt_pr = sdt.at_xpath('./w:sdtPr', namespaces)
+        next unless sdt_pr&.at_xpath('.//w14:checkbox', namespaces)
+
+        tag = sdt_pr.at_xpath('./w:tag/@w:val', namespaces)&.value
+        alias_val = sdt_pr.at_xpath('./w:alias/@w:val', namespaces)&.value
+        [tag, alias_val].include?(tag_or_alias)
+      end
+    end
+
+    def set_content_control_checked_state(checkbox, checked, namespaces)
+      checked_node = checkbox.at_xpath('./w14:checked', namespaces)
+      unless checked_node
+        ensure_w14_namespace_declared(checkbox)
+        checked_node = Nokogiri::XML::Node.new('w14:checked', @doc)
+        checkbox.add_child(checked_node)
+      end
+      checked_node['w14:val'] = checked ? '1' : '0'
+    end
+
+    def sync_content_control_checkbox_glyph(sdt, checkbox, checked, namespaces)
+      state_xpath = checked ? './w14:checkedState/@w14:val' : './w14:uncheckedState/@w14:val'
+      state_val = checkbox.at_xpath(state_xpath, namespaces)&.value
+      return unless state_val
+
+      glyph = state_val.to_i(16).chr(Encoding::UTF_8)
+      sdt_content = sdt.at_xpath('./w:sdtContent', namespaces)
+      return unless sdt_content
+
+      text_node = sdt_content.at_xpath('.//w:t', namespaces)
+      if text_node
+        text_node.content = glyph
+      else
+        run = sdt_content.at_xpath('./w:r', namespaces)
+        unless run
+          run = Nokogiri::XML::Node.new('w:r', @doc)
+          sdt_content.add_child(run)
+        end
+        text_node = Nokogiri::XML::Node.new('w:t', @doc)
+        text_node.content = glyph
+        run.add_child(text_node)
+      end
+    end
+
+    def ensure_w14_namespace_declared(node)
+      return if @doc.root&.namespaces&.fetch('w14', nil) == W14_NS
+
+      ancestor = node
+      while ancestor
+        return if ancestor.namespace_definitions.any? { |ns| ns.prefix == 'w14' && ns.href == W14_NS }
+
+        ancestor = ancestor.parent
+      end
+
+      node.add_namespace_definition('w14', W14_NS)
     end
 
     def find_run_with_placeholder(paragraph, placeholder)
