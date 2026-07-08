@@ -194,16 +194,20 @@ P3 R5(书签/批注) + R2 等价比较放宽 + 性能索引 + R6 收尾
 
 ---
 
-## 8. 风险登记（按优先级）
+## 8. 风险登记（按优先级）— 全部已闭环 ✅
 
-1. ~~**source zip 生命周期**（唯一真正未知数）~~ —— ✅ **已 spike 解决**：`@zip.close` 后仍可 `read`；路径打开为惰性重开文件，故 importer 构造时预读缓存所有 media bytes（见 §2）。
-2. **Nokogiri 带前缀属性改写/序列化**（P2 R5.4）—— 已知有坑，重点测 `r:embed`。
-3. **styles_configuration memo 一致性**（P1 R1a.4）—— 不处理会静默丢改。
-4. **样式等价判断**（P1 简化 / P3 放宽）—— 已有降级路径，风险可控。
-5. **跨文档 dup 的命名空间**（P1 R5.3）—— 以 target `@doc` 为上下文构造。
+1. ~~**source zip 生命周期**（唯一真正未知数）~~ —— ✅ **已 spike 解决**：`@zip.close` 后仍可 `read`；路径打开为惰性重开文件，故 MediaImporter 构造时预读缓存所有 media bytes（见 §2）。落地于 P2-1。
+2. ~~**Nokogiri 带前缀属性改写/序列化**（P2 R5.4）~~ —— ✅ **已解决**：`NodeRewriter` 用 r 命名空间 xpath 定位 `@r:embed/@r:id/@r:link` 后赋值；测试断言序列化后前缀仍为 `r:`/`a:` 且无重复 xmlns（`node_rewriter_spec` + `importer_image_spec`）。
+3. ~~**styles_configuration memo 一致性**（P1 R1a.4）~~ —— ✅ **已解决**：`styles_configuration` 改为持有 `@styles` 本体（去 `.dup`），`update` 直接序列化 `@styles`；回归测试验证「直接改 DOM 后 save→reopen 生效」（`document_parts_spec`）。
+4. ~~**样式等价判断**（P1 简化 / P3 放宽）~~ —— ✅ **已解决**：`normalize_style_xml` 比较前剥空白 + 排序属性，忽略属性顺序/空白；等价复用与「语义差异不等价→改名」均有测试（`styles_importer_spec`）。
+5. ~~**跨文档 dup 的命名空间**（P1 R5.3）~~ —— ✅ **已解决**：统一用 `dup(1)` + 插入 target 时由 Nokogiri adopt；多个 spec 断言 save→reopen 后 xpath 可达、`xmlns:w` 唯一（`styles_importer_spec`、`importer_spec`、`importer_image_spec`）。
+
+> **新增记录（实施期间发现并处理）**：既有测试的 `Tempfile.new(...).path` GC finalizer flaky（随机顺序下偶发 `Errno::ENOENT`，`--seed 1` 必现）——已统一改为 `Dir.tmpdir + SecureRandom` 安全路径，多 seed 稳定（commit `48331f3`）。
 
 ---
 
-## 9. 立即可执行的第一步
+## 9. 当前状态与后续
 
-先做 **P0 Spike**（第 2 节）。结论出来后，若确认 media 读取策略，即按 P1 顺序：R1a → R2 → R3 → R5(part) → R6(part)。
+**已全部完成**：P0 → P1 → P2 → P3，分支 `feature/cross-document-import`，全量 **307 examples, 0 failures**（多 seed 稳定、无告警）。§8 五项风险全部闭环。
+
+**后续可选（超出 R1–R6 原始范围，见 §5 末）**：批注/尾注部件整体导入、latentStyles 深度合并、Word/LibreOffice 真机视觉校验。
