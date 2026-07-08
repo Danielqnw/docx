@@ -19,7 +19,7 @@ module Docx
         @numbering_importer = NumberingImporter.new(
           target_doc,
           source_doc,
-          style_id_map: @styles_importer.style_id_map
+          styles_importer: @styles_importer
         )
         @media_importer = MediaImporter.new(target_doc, source_doc)
       end

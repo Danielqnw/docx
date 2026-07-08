@@ -60,12 +60,17 @@ describe Docx::Merge::NumberingImporter do
     XML
   end
 
-  def abstract_num(abs_id, num_style_link: nil, lvl_text: '•')
+  def abstract_num(abs_id, num_style_link: nil, lvl_text: '•', lvl_p_style: nil)
     style_link_xml = if num_style_link
                        %(        <w:numStyleLink w:val="#{num_style_link}"/>)
                      else
                        ''
                      end
+    p_style_xml = if lvl_p_style
+                    %(          <w:pStyle w:val="#{lvl_p_style}"/>)
+                  else
+                    ''
+                  end
     <<~XML
       <w:abstractNum w:abstractNumId="#{abs_id}">
       #{style_link_xml}
@@ -73,6 +78,7 @@ describe Docx::Merge::NumberingImporter do
           <w:start w:val="1"/>
           <w:numFmt w:val="bullet"/>
           <w:lvlText w:val="#{lvl_text}"/>
+      #{p_style_xml}
         </w:lvl>
       </w:abstractNum>
     XML
@@ -100,6 +106,74 @@ describe Docx::Merge::NumberingImporter do
 
   def num_node(doc, num_id)
     doc.numbering.at_xpath("//w:num[@w:numId='#{num_id}']", xml_ns)
+  end
+
+  def doc_defaults_xml
+    <<~XML
+      <w:docDefaults>
+        <w:rPrDefault>
+          <w:rPr>
+            <w:rFonts w:ascii="Times New Roman" w:eastAsia="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+          </w:rPr>
+        </w:rPrDefault>
+        <w:pPrDefault/>
+      </w:docDefaults>
+    XML
+  end
+
+  def paragraph_style(style_id, spacing_after: '120')
+    <<~XML
+      <w:style w:type="paragraph" w:styleId="#{style_id}">
+        <w:name w:val="#{style_id}"/>
+        <w:pPr><w:spacing w:after="#{spacing_after}"/></w:pPr>
+      </w:style>
+    XML
+  end
+
+  def wrap_styles(*children)
+    <<~XML
+      <?xml version="1.0"?>
+      <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+        #{doc_defaults_xml}
+        #{children.join("\n")}
+      </w:styles>
+    XML
+  end
+
+  def build_doc_with_styles_and_numbering(styles_xml, numbering_xml)
+    base = File.join('spec/fixtures', 'basic.docx')
+    buffer = Zip::OutputStream.write_buffer do |out|
+      has_numbering = false
+      Zip::File.open(base) do |zf|
+        zf.each do |entry|
+          next unless entry.file?
+
+          content = case entry.name
+                    when 'word/styles.xml' then styles_xml
+                    when 'word/numbering.xml'
+                      has_numbering = true
+                      numbering_xml
+                    else
+                      zf.read(entry.name)
+                    end
+          out.put_next_entry(entry.name)
+          out.write(content)
+        end
+      end
+      unless has_numbering
+        out.put_next_entry('word/numbering.xml')
+        out.write(numbering_xml)
+      end
+    end
+    Docx::Document.open(StringIO.new(buffer.string))
+  end
+
+  def style_node(doc, style_id)
+    doc.styles.at_xpath("//w:style[@w:styleId='#{style_id}']", xml_ns)
+  end
+
+  def style_nodes(doc)
+    doc.styles.xpath('//w:styles/w:style', xml_ns)
   end
 
   describe '#import' do
@@ -150,6 +224,26 @@ describe Docx::Merge::NumberingImporter do
 
       imported_abs = abstract_num_node(target, '0')
       expect(imported_abs.at_xpath('./w:numStyleLink/@w:val', ns).value).to eq('m1_SrcStyle')
+    end
+
+    it 'does not import styles when only style_id_map is provided' do
+      src_list_style = paragraph_style('SrcList')
+      target = build_doc_with_styles_and_numbering(wrap_styles, wrap_numbering(num(1, 0)))
+      source = build_doc_with_styles_and_numbering(
+        wrap_styles(src_list_style),
+        wrap_numbering(abstract_num(0, num_style_link: 'SrcList'), num(1, 0))
+      )
+      initial_style_count = style_nodes(target).size
+      style_map = { 'SrcList' => 'MappedList' }
+
+      importer = described_class.new(target, source, style_id_map: style_map)
+      importer.import('1')
+
+      imported_abs = abstract_num_node(target, '0')
+      expect(imported_abs.at_xpath('./w:numStyleLink/@w:val', ns).value).to eq('MappedList')
+      expect(style_nodes(target).size).to eq(initial_style_count)
+      expect(style_node(target, 'MappedList')).to be_nil
+      expect(style_node(target, 'SrcList')).to be_nil
     end
 
     it 'imports shared abstractNum only once when multiple nums reference it' do
@@ -238,6 +332,49 @@ describe Docx::Merge::NumberingImporter do
       expect(abstract_num_node(reopened, '0')).not_to be_nil
     ensure
       File.delete(temp_path) if defined?(temp_path) && temp_path && File.exist?(temp_path)
+    end
+  end
+
+  describe 'numbering-to-style closure' do
+    it 'imports styles referenced by numStyleLink and rewrites the link' do
+      src_list_style = paragraph_style('SrcList')
+      target = build_doc_with_styles_and_numbering(wrap_styles, wrap_numbering(num(1, 0)))
+      source = build_doc_with_styles_and_numbering(
+        wrap_styles(src_list_style),
+        wrap_numbering(abstract_num(0, num_style_link: 'SrcList'), num(1, 0))
+      )
+      styles_importer = Docx::Merge::StylesImporter.new(target, source)
+
+      importer = described_class.new(target, source, styles_importer: styles_importer)
+      importer.import('1')
+
+      imported_abs = abstract_num_node(target, '0')
+      expect(style_node(target, 'SrcList')).not_to be_nil
+      expect(imported_abs.at_xpath('./w:numStyleLink/@w:val', ns).value).to eq('SrcList')
+      expect(styles_importer.style_id_map).to eq('SrcList' => 'SrcList')
+    end
+
+    it 'imports lvl pStyle with conflict rename and rewrites the reference' do
+      target_list_para = paragraph_style('ListPara', spacing_after: '100')
+      source_list_para = paragraph_style('ListPara', spacing_after: '200')
+      target = build_doc_with_styles_and_numbering(
+        wrap_styles(target_list_para),
+        wrap_numbering(num(1, 0))
+      )
+      source = build_doc_with_styles_and_numbering(
+        wrap_styles(source_list_para),
+        wrap_numbering(abstract_num(0, lvl_p_style: 'ListPara'), num(1, 0))
+      )
+      styles_importer = Docx::Merge::StylesImporter.new(target, source)
+
+      importer = described_class.new(target, source, styles_importer: styles_importer)
+      importer.import('1')
+
+      imported_abs = abstract_num_node(target, '0')
+      expect(style_node(target, 'ListPara').at_xpath('.//w:spacing/@w:after', ns).value).to eq('100')
+      expect(style_node(target, 'm1_ListPara')).not_to be_nil
+      expect(imported_abs.at_xpath('.//w:lvl/w:pStyle/@w:val', ns).value).to eq('m1_ListPara')
+      expect(styles_importer.style_id_map).to eq('ListPara' => 'm1_ListPara')
     end
   end
 

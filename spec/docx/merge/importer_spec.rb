@@ -73,6 +73,24 @@ describe Docx::Merge::Importer do
     XML
   end
 
+  def paragraph_style(style_id, spacing_after: '120')
+    <<~XML
+      <w:style w:type="paragraph" w:styleId="#{style_id}">
+        <w:name w:val="#{style_id}"/>
+        <w:pPr><w:spacing w:after="#{spacing_after}"/></w:pPr>
+      </w:style>
+    XML
+  end
+
+  def paragraph_style(style_id, spacing_after: '120')
+    <<~XML
+      <w:style w:type="paragraph" w:styleId="#{style_id}">
+        <w:name w:val="#{style_id}"/>
+        <w:pPr><w:spacing w:after="#{spacing_after}"/></w:pPr>
+      </w:style>
+    XML
+  end
+
   def wrap_styles(*children)
     <<~XML
       <?xml version="1.0"?>
@@ -93,13 +111,25 @@ describe Docx::Merge::Importer do
     XML
   end
 
-  def abstract_num(abs_id, lvl_text: '•')
+  def abstract_num(abs_id, lvl_text: '•', num_style_link: nil, lvl_p_style: nil)
+    style_link_xml = if num_style_link
+                       %(        <w:numStyleLink w:val="#{num_style_link}"/>)
+                     else
+                       ''
+                     end
+    p_style_xml = if lvl_p_style
+                    %(          <w:pStyle w:val="#{lvl_p_style}"/>)
+                  else
+                    ''
+                  end
     <<~XML
       <w:abstractNum w:abstractNumId="#{abs_id}">
+      #{style_link_xml}
         <w:lvl w:ilvl="0">
           <w:start w:val="1"/>
           <w:numFmt w:val="bullet"/>
           <w:lvlText w:val="#{lvl_text}"/>
+      #{p_style_xml}
         </w:lvl>
       </w:abstractNum>
     XML
@@ -170,6 +200,21 @@ describe Docx::Merge::Importer do
 
   def num_node(doc, num_id)
     doc.numbering&.at_xpath("//w:num[@w:numId='#{num_id}']", xml_ns)
+  end
+
+  def abstract_num_node(doc, abs_id)
+    doc.numbering&.at_xpath("//w:abstractNum[@w:abstractNumId='#{abs_id}']", xml_ns)
+  end
+
+  def numbering_style_ids(doc)
+    ids = []
+    doc.numbering.xpath('//w:abstractNum/w:styleLink | //w:abstractNum/w:numStyleLink', xml_ns).each do |node|
+      ids << node['w:val'] if node['w:val']
+    end
+    doc.numbering.xpath('//w:abstractNum//w:lvl/w:pStyle', xml_ns).each do |node|
+      ids << node['w:val'] if node['w:val']
+    end
+    ids.uniq
   end
 
   def source_tbl_node(source)
@@ -262,6 +307,42 @@ describe Docx::Merge::Importer do
       expect(importer.num_id_map).to eq('1' => '1')
       expect(num_node(target, '1')).not_to be_nil
       expect(target.numbering.at_xpath("//w:abstractNum[@w:abstractNumId='0']", xml_ns)).not_to be_nil
+    end
+
+    it 'imports styles referenced by numbering definitions during import' do
+      list_para_style = paragraph_style('ListPara', spacing_after: '200')
+      target = build_doc(
+        document_xml: target_document_xml,
+        styles_xml: wrap_styles(paragraph_style('ListPara', spacing_after: '100'))
+      )
+      source = build_doc(
+        document_xml: source_document_xml(num_id: '1'),
+        styles_xml: wrap_styles(list_para_style, paragraph_style('SrcList', spacing_after: '80')),
+        numbering_xml: wrap_numbering(
+          abstract_num(0, lvl_p_style: 'ListPara', num_style_link: 'SrcList'),
+          num(1, 0)
+        )
+      )
+
+      importer = described_class.new(target, source)
+      imported = importer.import(source_tbl_node(source))
+      anchor = target.doc.at_xpath('//w:body/w:p', xml_ns)
+      anchor.add_previous_sibling(imported)
+
+      expect(style_node(target, 'SrcList')).not_to be_nil
+      expect(style_node(target, 'm1_ListPara')).not_to be_nil
+      imported_abs = abstract_num_node(target, '0')
+      expect(imported_abs.at_xpath('./w:numStyleLink/@w:val', xml_ns).value).to eq('SrcList')
+      expect(imported_abs.at_xpath('.//w:lvl/w:pStyle/@w:val', xml_ns).value).to eq('m1_ListPara')
+
+      temp_path = save_to_tempfile(target)
+      reopened = Docx::Document.open(temp_path)
+
+      numbering_style_ids(reopened).each do |style_id|
+        expect(style_node(reopened, style_id)).not_to be_nil, "missing numbering style #{style_id}"
+      end
+    ensure
+      File.delete(temp_path) if defined?(temp_path) && temp_path && File.exist?(temp_path)
     end
 
     it 'reuses style imports across multiple nodes referencing the same style' do
@@ -412,6 +493,15 @@ describe 'Docx::Document cross-document import API' do
             <w:top w:val="#{border_val}" w:sz="4" w:space="0" w:color="auto"/>
           </w:tblBorders>
         </w:tblPr>
+      </w:style>
+    XML
+  end
+
+  def paragraph_style(style_id, spacing_after: '120')
+    <<~XML
+      <w:style w:type="paragraph" w:styleId="#{style_id}">
+        <w:name w:val="#{style_id}"/>
+        <w:pPr><w:spacing w:after="#{spacing_after}"/></w:pPr>
       </w:style>
     XML
   end

@@ -10,10 +10,16 @@ module Docx
 
       attr_reader :num_id_map, :abstract_num_id_map
 
-      def initialize(target_doc, source_doc, style_id_map: {})
+      def initialize(target_doc, source_doc, style_id_map: {}, styles_importer: nil)
         @target_doc = target_doc
         @source_doc = source_doc
-        @style_id_map = style_id_map
+        if styles_importer
+          @styles_importer = styles_importer
+          @style_id_map = styles_importer.style_id_map
+        else
+          @styles_importer = nil
+          @style_id_map = style_id_map
+        end
         @num_id_map = {}
         @abstract_num_id_map = {}
         @target_numbering = nil
@@ -131,6 +137,14 @@ module Docx
         new_num_id
       end
 
+      def map_style_id(style_id)
+        if @styles_importer
+          @styles_importer.import(style_id)
+        else
+          @style_id_map.fetch(style_id, style_id)
+        end
+      end
+
       def rewrite_style_links(abstract_num_node)
         STYLE_LINK_ELEMENTS.each do |element_name|
           link_node = abstract_num_node.at_xpath("w:#{element_name}", XML_NAMESPACES)
@@ -139,7 +153,14 @@ module Docx
           style_id = link_node['w:val']
           next unless style_id
 
-          link_node['w:val'] = @style_id_map.fetch(style_id, style_id)
+          link_node['w:val'] = map_style_id(style_id)
+        end
+
+        abstract_num_node.xpath('.//w:lvl/w:pStyle', XML_NAMESPACES).each do |p_style_node|
+          style_id = p_style_node['w:val']
+          next unless style_id
+
+          p_style_node['w:val'] = map_style_id(style_id)
         end
       end
 
