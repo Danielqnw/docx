@@ -8,6 +8,8 @@ module Docx
     class Importer
       STYLE_ELEMENTS = %w[pStyle rStyle tblStyle].freeze
       XML_NAMESPACES = Docx::Document::XML_NAMESPACES
+      RID_NS = { 'r' => 'http://schemas.openxmlformats.org/officeDocument/2006/relationships' }.freeze
+      RID_ATTRIBUTE_XPATH = './/@r:embed | .//@r:id | .//@r:link | self::*/@r:embed | self::*/@r:id | self::*/@r:link'.freeze
 
       def initialize(target_doc, source_doc)
         @target_doc = target_doc
@@ -18,6 +20,7 @@ module Docx
           source_doc,
           style_id_map: @styles_importer.style_id_map
         )
+        @media_importer = MediaImporter.new(target_doc, source_doc)
       end
 
       def import(node)
@@ -29,10 +32,15 @@ module Docx
           @numbering_importer.import(num_id)
         end
 
+        collect_relationship_ids(node).each do |rid|
+          @media_importer.import(rid)
+        end
+
         imported = node.dup(1)
         NodeRewriter.new(
           style_id_map: @styles_importer.style_id_map,
-          num_id_map: @numbering_importer.num_id_map
+          num_id_map: @numbering_importer.num_id_map,
+          rid_map: @media_importer.rid_map
         ).rewrite(imported)
       end
 
@@ -46,6 +54,10 @@ module Docx
 
       def abstract_num_id_map
         @numbering_importer.abstract_num_id_map
+      end
+
+      def rid_map
+        @media_importer.rid_map
       end
 
       private
@@ -62,6 +74,10 @@ module Docx
 
       def collect_num_ids(node)
         node.xpath('(self::w:numPr | .//w:numPr)/w:numId/@w:val', XML_NAMESPACES).map(&:value).uniq
+      end
+
+      def collect_relationship_ids(node)
+        node.xpath(RID_ATTRIBUTE_XPATH, RID_NS).map(&:value).uniq
       end
     end
   end
