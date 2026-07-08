@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.12.0
+
+### Enhancements (template filling)
+
+- Cross-run text substitution that matches placeholders split across multiple runs while preserving the first matched run's formatting:
+  - `Paragraph#substitute(match, replacement, multiline: false)` — `match` accepts `String` or `Regexp` (capture groups supported)
+  - `Document#substitute_across_runs(match, replacement, multiline: false)` — applies to every paragraph including table cells
+- Multiline replacement: with `multiline: true`, `"\n"` in the replacement becomes a soft line break (`<w:br/>`)
+- Insert images at text-only placeholders (no pre-existing image required), for both paragraphs and table cells:
+  - `Document#insert_image_at_placeholder(placeholder, source, options = {})`
+  - `Document#insert_images_at_placeholder(placeholder, sources = [], options = {})`
+  - Auto-registers `word/media`, the relationship in `document.xml.rels`, and the `[Content_Types].xml` default; `[Content_Types].xml` is now loaded and written back on save/stream
+- Replace images by placeholder in ordinary paragraphs (not just table cells):
+  - `Document#replace_image_by_placeholder(placeholder, source, options = {})` (the existing `*_in_table` method is preserved and now delegates to a shared implementation)
+- Checkbox / selection state:
+  - `Document#set_checkbox(locator, checked:, checked_glyph:, unchecked_glyph:)` — character-glyph checkboxes (e.g. `☐`→`☑`, or `[ ]`→`[x]`)
+  - `Document#check_content_control(tag_or_alias, checked:)` — Word content-control checkboxes (`w:sdt` + `w14:checkbox`), syncs the displayed glyph
+- High-level data-driven rendering:
+  - `Document#render(text:, images:, checkboxes:, content_controls:, tables:, multiline:, strip_unfilled:, strict:, image_options:)`
+- Placeholder cleanup:
+  - `Document#strip_unfilled_placeholders(pattern: /\{\{.*?\}\}/)` — cross-run aware, clears leftover placeholders without touching filled content
+
+All new capabilities are additive; existing public APIs (`substitute`, `replace_image*`, table/merge) are unchanged.
+
 ## v0.11.0
 
 ### Enhancements

@@ -32,6 +32,16 @@ module Docx
     }
     IMAGE_FIT_MODES = %i[cover contain stretch].freeze
     CM_TO_EMU = 360_000
+    MAX_IMAGE_WIDTH_EMU = 5_486_400
+    CONTENT_TYPES_NS = 'http://schemas.openxmlformats.org/package/2006/content-types'
+    CONTENT_TYPES_PATH = '[Content_Types].xml'
+    CONTENT_TYPE_MAPPINGS = {
+      'png' => 'image/png',
+      'jpg' => 'image/jpeg',
+      'jpeg' => 'image/jpeg',
+      'gif' => 'image/gif',
+      'bmp' => 'image/bmp'
+    }.freeze
     XML_NAMESPACES = {
       'w' => 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
       'a' => 'http://schemas.openxmlformats.org/drawingml/2006/main',
@@ -157,6 +167,63 @@ module Docx
       paragraphs.map(&:to_html).join("\n")
     end
 
+    # Substitute a placeholder across runs in every paragraph of the document,
+    # including paragraphs nested inside table cells. Delegates to
+    # Paragraph#substitute so placeholders split across multiple runs are matched.
+    #
+    #   match: String | Regexp
+    #   multiline: when true, "\n" in replacement becomes a soft line break (<w:br/>)
+    def substitute_across_runs(match, replacement, multiline: false)
+      @doc.xpath('//w:p', XML_NAMESPACES).each do |p_node|
+        Elements::Containers::Paragraph.new(p_node, document_properties, self)
+                                       .substitute(match, replacement, multiline: multiline)
+      end
+      self
+    end
+
+    # Remove unfilled placeholder text matching +pattern+ from every paragraph,
+    # including paragraphs inside table cells. Uses Paragraph#substitute for
+    # cross-run safety. Idempotent; returns self.
+    def strip_unfilled_placeholders(pattern: /\{\{.*?\}\}/)
+      @doc.xpath('//w:p', XML_NAMESPACES).each do |p_node|
+        Elements::Containers::Paragraph.new(p_node, document_properties, self)
+                                       .substitute(pattern, '')
+      end
+      self
+    end
+
+    # High-level template render entry. Keys are placeholder names; value types
+    # determine handling. Returns self for chaining.
+    #
+    # Processing order: text → tables → images → checkboxes → content_controls
+    # → strip_unfilled (when enabled).
+    def render(text: {}, images: {}, checkboxes: {}, content_controls: {}, tables: [],
+               multiline: true, strip_unfilled: false, strict: false, image_options: {})
+      text.each do |placeholder, value|
+        substitute_across_runs(placeholder, value.to_s, multiline: multiline)
+      end
+
+      tables.each do |table_spec|
+        render_table_rows(table_spec, multiline: multiline, strict: strict)
+      end
+
+      images.each do |placeholder, source|
+        render_image(placeholder, source, image_options: image_options, strict: strict)
+      end
+
+      checkboxes.each do |locator, checked|
+        with_strict_rescue(strict) { set_checkbox(locator, checked: checked) }
+      end
+
+      content_controls.each do |tag_or_alias, checked|
+        with_strict_rescue(strict) { check_content_control(tag_or_alias, checked: checked) }
+      end
+
+      strip_unfilled_placeholders if strip_unfilled
+
+      self
+    end
+
     # Save document to provided path
     # call-seq:
     #   save(filepath) => void
@@ -229,41 +296,56 @@ module Docx
       replace_entry(image_entry_path, read_replacement_source(replacement_source))
     end
 
+    # Replace an existing image located by placeholder text in any paragraph.
+    #
+    # The search host is the paragraph containing the placeholder, or its table cell
+    # ancestor when the paragraph lives inside a cell (image may be in another paragraph
+    # within the same cell).
+    #
+    # Options:
+    #   fit: :cover | :contain | :stretch (default: :stretch)
+    #   cleanup_placeholder: true | false (default: true)
+    #   width: width in cm
+    #   height: height in cm
+    def replace_image_by_placeholder(placeholder, replacement_source, options = {})
+      paragraph = find_paragraph_by_placeholder(placeholder)
+      raise Errors::ImagePlaceholderNotFound, "Placeholder not found: #{placeholder}" if paragraph.nil?
+
+      host = paragraph.at_xpath('./ancestor::w:tc[1]', XML_NAMESPACES) || paragraph
+      cleanup_kind = host.name == 'tc' ? :cell : :paragraph
+      image_not_found_message = if cleanup_kind == :cell
+                                  "No image found in the same cell as placeholder: #{placeholder}"
+                                else
+                                  "No image found in the same paragraph as placeholder: #{placeholder}"
+                                end
+
+      replace_image_within_host(
+        host,
+        placeholder,
+        replacement_source,
+        options,
+        cleanup_kind: cleanup_kind,
+        image_not_found_message: image_not_found_message
+      )
+    end
+
     # Replace an image located by placeholder text in a table cell.
     #
     # Options:
     #   fit: :cover | :contain | :stretch (default: :stretch)
     #   cleanup_placeholder: true | false (default: true)
     def replace_image_by_placeholder_in_table(placeholder, replacement_source, options = {})
-      fit = normalize_fit_option(options.fetch(:fit, :stretch))
-      cleanup_placeholder = options.fetch(:cleanup_placeholder, true)
-      width_cm = options[:width]
-      height_cm = options[:height]
-
       target_cell = find_table_cell_by_placeholder(placeholder)
       raise Errors::ImagePlaceholderNotFound, "Placeholder not found in table cells: #{placeholder}" if target_cell.nil?
 
-      embed_attr = target_cell.at_xpath('.//a:blip/@r:embed', XML_NAMESPACES)
-      raise Errors::ImageNotFound, "No image found in the same cell as placeholder: #{placeholder}" if embed_attr.nil?
-
-      rid = embed_attr.value
-      image_entry_path = resolve_image_entry_path(rid)
-      replacement_contents = read_replacement_source(replacement_source)
-
-      replace_entry(image_entry_path, replacement_contents)
-
-      drawing_node = target_cell.at_xpath(".//w:drawing[.//a:blip[@r:embed='#{rid}']]", XML_NAMESPACES)
-      if drawing_node
-        apply_image_size_to_drawing(drawing_node, width_cm, height_cm, replacement_contents)
-        apply_image_fit_to_drawing(drawing_node, fit, replacement_contents) if fit != :stretch
-      end
-      remove_placeholder_from_cell(target_cell, placeholder) if cleanup_placeholder
-
-      {
-        relationship_id: rid,
-        entry_path: image_entry_path,
-        fit: fit
-      }
+      replace_image_within_host(
+        target_cell,
+        placeholder,
+        replacement_source,
+        options,
+        cleanup_kind: :cell,
+        image_not_found_message: "No image found in the same cell as placeholder: #{placeholder}"
+      )
     end
 
     # Batch replacement for a single placeholder anchored in table cell.
@@ -340,6 +422,92 @@ module Docx
       placements
     end
 
+    # Insert an image at a placeholder text in any paragraph (body or table cell).
+    #
+    # Options:
+    #   fit: :cover | :contain | :stretch (default: :contain)
+    #   width: width in cm
+    #   height: height in cm
+    #   cleanup_placeholder: true | false (default: true)
+    def insert_image_at_placeholder(placeholder, source, options = {})
+      insert_images_at_placeholder(placeholder, [source], options).first
+    end
+
+    # Insert multiple images at a placeholder text in the same paragraph.
+    #
+    # Returns an array of placement hashes:
+    #   [{ relationship_id: "rId2", entry_path: "word/media/image_generated_1.png", fit: :contain }, ...]
+    def insert_images_at_placeholder(placeholder, sources = [], options = {})
+      sources = Array(sources).compact
+      fit = normalize_fit_option(options.fetch(:fit, :contain))
+      cleanup_placeholder = options.fetch(:cleanup_placeholder, true)
+      width_cm = options[:width]
+      height_cm = options[:height]
+
+      paragraph = find_paragraph_by_placeholder(placeholder)
+
+      if sources.empty?
+        remove_placeholder_from_paragraph(paragraph, placeholder) if paragraph && cleanup_placeholder
+        return []
+      end
+
+      raise Errors::ImagePlaceholderNotFound, "Placeholder not found: #{placeholder}" if paragraph.nil?
+
+      anchor_run = find_run_with_placeholder(paragraph, placeholder)
+      last_inserted = anchor_run
+      placements = []
+
+      sources.each do |source|
+        image_bytes = read_replacement_source(source)
+        placement = insert_drawing_at_paragraph(
+          paragraph,
+          image_bytes,
+          fit: fit,
+          width_cm: width_cm,
+          height_cm: height_cm,
+          insert_after: last_inserted
+        )
+        last_inserted = placement.delete(:run_node)
+        placements << placement
+      end
+
+      remove_placeholder_from_paragraph(paragraph, placeholder) if cleanup_placeholder
+      placements
+    end
+
+    # Toggle a character-based checkbox glyph within the paragraph containing +locator+.
+    #
+    #   set_checkbox('选项A', checked: true)
+    #   set_checkbox('[ ]', checked: true, unchecked_glyph: '[ ]', checked_glyph: '[x]')
+    def set_checkbox(locator, checked: true, checked_glyph: "\u2611", unchecked_glyph: "\u2610")
+      paragraph = find_paragraph_by_placeholder(locator)
+      raise Errors::ImagePlaceholderNotFound, "Checkbox locator not found: #{locator}" if paragraph.nil?
+
+      from_glyph = checked ? unchecked_glyph : checked_glyph
+      to_glyph = checked ? checked_glyph : unchecked_glyph
+
+      paragraph.xpath('.//w:t', XML_NAMESPACES).each do |text_node|
+        text_node.content = text_node.content.gsub(from_glyph, to_glyph)
+      end
+
+      true
+    end
+
+    # Set a Word content-control checkbox (w:sdt + w14:checkbox) by tag or alias.
+    #
+    #   check_content_control('opt_a', checked: true)
+    def check_content_control(tag_or_alias, checked: true)
+      namespaces = xml_namespaces_with_w14
+      sdt = find_content_control_checkbox(tag_or_alias, namespaces)
+      raise Errors::ImagePlaceholderNotFound, "Content control checkbox not found: #{tag_or_alias}" if sdt.nil?
+
+      checkbox = sdt.at_xpath('.//w14:checkbox', namespaces)
+      set_content_control_checked_state(checkbox, checked, namespaces)
+      sync_content_control_checkbox_glyph(sdt, checkbox, checked, namespaces)
+
+      true
+    end
+
     def default_paragraph_style
       @styles.at_xpath("w:styles/w:style[@w:type='paragraph' and @w:default='1']/w:name/@w:val").value
     end
@@ -353,6 +521,92 @@ module Docx
     end
 
     private
+
+    def with_strict_rescue(strict)
+      yield
+    rescue Errors::ImagePlaceholderNotFound
+      raise if strict
+    end
+
+    def render_table_rows(table_spec, multiline:, strict:)
+      placeholder_row = table_spec[:placeholder_row] || table_spec['placeholder_row']
+      rows = table_spec[:rows] || table_spec['rows']
+      return if rows.nil? || rows.empty?
+
+      template_tr = @doc.xpath('//w:tr', XML_NAMESPACES).find do |tr|
+        tr.xpath('.//w:t', XML_NAMESPACES).map(&:text).join.include?(placeholder_row)
+      end
+
+      if template_tr.nil?
+        raise Errors::ImagePlaceholderNotFound, "Template row not found: #{placeholder_row}" if strict
+
+        return
+      end
+
+      last_inserted = template_tr
+      rows.each do |row_data|
+        cloned = template_tr.dup(1)
+        cloned.xpath('.//w:p', XML_NAMESPACES).each do |p_node|
+          paragraph = Elements::Containers::Paragraph.new(p_node, document_properties, self)
+          row_data.each do |ph, val|
+            paragraph.substitute(ph, val.to_s, multiline: multiline)
+          end
+          paragraph.substitute(placeholder_row, '', multiline: false)
+        end
+        last_inserted.add_next_sibling(cloned)
+        last_inserted = cloned
+      end
+
+      template_tr.remove
+    end
+
+    def render_image(placeholder, source, image_options:, strict:)
+      with_strict_rescue(strict) do
+        if source.is_a?(Array)
+          render_image_array(placeholder, source, image_options)
+        else
+          render_single_image(placeholder, source, image_options)
+        end
+      end
+    end
+
+    def render_single_image(placeholder, source, image_options)
+      if placeholder_host_has_image?(placeholder)
+        replace_image_by_placeholder(placeholder, source, image_options)
+      else
+        insert_image_at_placeholder(placeholder, source, image_options)
+      end
+    end
+
+    def render_image_array(placeholder, sources, image_options)
+      sources = Array(sources).compact
+      return if sources.empty?
+
+      if placeholder_host_has_image?(placeholder)
+        host = placeholder_image_host(placeholder)
+        if host&.name == 'tc'
+          replace_images_by_placeholder_in_table(placeholder, sources, image_options)
+        else
+          replace_image_by_placeholder(placeholder, sources.first, image_options)
+        end
+      else
+        insert_images_at_placeholder(placeholder, sources, image_options)
+      end
+    end
+
+    def placeholder_image_host(placeholder)
+      paragraph = find_paragraph_by_placeholder(placeholder)
+      return nil if paragraph.nil?
+
+      paragraph.at_xpath('./ancestor::w:tc[1]', XML_NAMESPACES) || paragraph
+    end
+
+    def placeholder_host_has_image?(placeholder)
+      host = placeholder_image_host(placeholder)
+      return false if host.nil?
+
+      !host.at_xpath('.//a:blip', XML_NAMESPACES).nil?
+    end
 
     def extract_documents
       DOCUMENT_PATHS.each do |attr_name, path|
@@ -382,8 +636,7 @@ module Docx
     end
 
     def load_styles
-      @styles_xml = @zip.read('word/styles.xml')
-      @styles = Nokogiri::XML(@styles_xml)
+      @styles = Nokogiri::XML(@zip.read('word/styles.xml'))
       load_rels
     rescue Errno::ENOENT => e
       warn e.message
@@ -395,8 +648,17 @@ module Docx
       raise Errno::ENOENT unless rels_entry
 
       @rels_path = rels_entry.name
-      @rels_xml = rels_entry.get_input_stream.read
-      @rels = Nokogiri::XML(@rels_xml)
+      @rels = Nokogiri::XML(rels_entry.get_input_stream.read)
+      load_content_types
+    end
+
+    def load_content_types
+      entry = @zip.find_entry(CONTENT_TYPES_PATH)
+      return unless entry
+
+      @replace[CONTENT_TYPES_PATH] = entry.get_input_stream.read
+    rescue Errno::ENOENT
+      nil
     end
 
     #--
@@ -463,11 +725,137 @@ module Docx
       end
     end
 
+    def replace_image_within_host(host_node, placeholder, replacement_source, options, cleanup_kind:, image_not_found_message:)
+      fit = normalize_fit_option(options.fetch(:fit, :stretch))
+      cleanup_placeholder = options.fetch(:cleanup_placeholder, true)
+      width_cm = options[:width]
+      height_cm = options[:height]
+
+      embed_attr = host_node.at_xpath('.//a:blip/@r:embed', XML_NAMESPACES)
+      raise Errors::ImageNotFound, image_not_found_message if embed_attr.nil?
+
+      rid = embed_attr.value
+      image_entry_path = resolve_image_entry_path(rid)
+      replacement_contents = read_replacement_source(replacement_source)
+
+      replace_entry(image_entry_path, replacement_contents)
+
+      drawing_node = host_node.at_xpath(".//w:drawing[.//a:blip[@r:embed='#{rid}']]", XML_NAMESPACES)
+      if drawing_node
+        apply_image_size_to_drawing(drawing_node, width_cm, height_cm, replacement_contents)
+        apply_image_fit_to_drawing(drawing_node, fit, replacement_contents) if fit != :stretch
+      end
+
+      if cleanup_placeholder
+        case cleanup_kind
+        when :cell
+          remove_placeholder_from_cell(host_node, placeholder)
+        when :paragraph
+          remove_placeholder_from_paragraph(host_node, placeholder)
+        end
+      end
+
+      {
+        relationship_id: rid,
+        entry_path: image_entry_path,
+        fit: fit
+      }
+    end
+
     def find_table_cell_by_placeholder(placeholder)
       doc.xpath('//w:tbl//w:tr//w:tc', XML_NAMESPACES).find do |cell|
         text = cell.xpath('.//w:t', XML_NAMESPACES).map(&:text).join
         text.include?(placeholder)
       end
+    end
+
+    def find_paragraph_by_placeholder(placeholder)
+      doc.xpath('//w:p', XML_NAMESPACES).find do |paragraph|
+        text = paragraph.xpath('.//w:t', XML_NAMESPACES).map(&:text).join
+        text.include?(placeholder)
+      end
+    end
+
+    W14_NS = 'http://schemas.microsoft.com/office/word/2010/wordml'
+
+    def xml_namespaces_with_w14
+      XML_NAMESPACES.merge('w14' => W14_NS)
+    end
+
+    def find_content_control_checkbox(tag_or_alias, namespaces)
+      doc.xpath('//w:sdt', namespaces).find do |sdt|
+        sdt_pr = sdt.at_xpath('./w:sdtPr', namespaces)
+        next unless sdt_pr&.at_xpath('.//w14:checkbox', namespaces)
+
+        tag = sdt_pr.at_xpath('./w:tag/@w:val', namespaces)&.value
+        alias_val = sdt_pr.at_xpath('./w:alias/@w:val', namespaces)&.value
+        [tag, alias_val].include?(tag_or_alias)
+      end
+    end
+
+    def set_content_control_checked_state(checkbox, checked, namespaces)
+      checked_node = checkbox.at_xpath('./w14:checked', namespaces)
+      unless checked_node
+        ensure_w14_namespace_declared(checkbox)
+        checked_node = Nokogiri::XML::Node.new('w14:checked', @doc)
+        checkbox.add_child(checked_node)
+      end
+      checked_node['w14:val'] = checked ? '1' : '0'
+    end
+
+    def sync_content_control_checkbox_glyph(sdt, checkbox, checked, namespaces)
+      state_xpath = checked ? './w14:checkedState/@w14:val' : './w14:uncheckedState/@w14:val'
+      state_val = checkbox.at_xpath(state_xpath, namespaces)&.value
+      return unless state_val
+
+      glyph = state_val.to_i(16).chr(Encoding::UTF_8)
+      sdt_content = sdt.at_xpath('./w:sdtContent', namespaces)
+      return unless sdt_content
+
+      text_node = sdt_content.at_xpath('.//w:t', namespaces)
+      if text_node
+        text_node.content = glyph
+      else
+        run = sdt_content.at_xpath('./w:r', namespaces)
+        unless run
+          run = Nokogiri::XML::Node.new('w:r', @doc)
+          sdt_content.add_child(run)
+        end
+        text_node = Nokogiri::XML::Node.new('w:t', @doc)
+        text_node.content = glyph
+        run.add_child(text_node)
+      end
+    end
+
+    def ensure_w14_namespace_declared(node)
+      return if @doc.root&.namespaces&.fetch('w14', nil) == W14_NS
+
+      ancestor = node
+      while ancestor
+        return if ancestor.namespace_definitions.any? { |ns| ns.prefix == 'w14' && ns.href == W14_NS }
+
+        ancestor = ancestor.parent
+      end
+
+      node.add_namespace_definition('w14', W14_NS)
+    end
+
+    def find_run_with_placeholder(paragraph, placeholder)
+      paragraph.xpath('./w:r', XML_NAMESPACES).find do |run|
+        text = run.xpath('.//w:t', XML_NAMESPACES).map(&:text).join
+        text.include?(placeholder)
+      end
+    end
+
+    def remove_placeholder_from_paragraph(paragraph, placeholder)
+      text_nodes = paragraph.xpath('.//w:t', XML_NAMESPACES)
+      return if text_nodes.empty?
+
+      merged_text = text_nodes.map(&:text).join
+      return unless merged_text.include?(placeholder)
+
+      text_nodes.first.content = merged_text.gsub(placeholder, '')
+      text_nodes.drop(1).each { |node| node.content = '' }
     end
 
     def table_cell_index_within_row(row_node, cell_node)
@@ -692,9 +1080,140 @@ module Docx
 
       add_image_relationship(relationship_id, entry_path)
       replace_entry(entry_path, replacement_contents)
+      ensure_content_type_default(ext)
       embed_attr.value = relationship_id
 
       { relationship_id: relationship_id, entry_path: entry_path }
+    end
+
+    def ensure_content_type_default(ext)
+      xml = @replace[CONTENT_TYPES_PATH]
+      return unless xml
+
+      ext = ext.to_s.downcase
+      content_type = CONTENT_TYPE_MAPPINGS[ext]
+      return unless content_type
+
+      content_types = Nokogiri::XML(xml)
+      types_node = content_types.at_xpath('/xmlns:Types', 'xmlns' => CONTENT_TYPES_NS)
+      return unless types_node
+
+      existing = types_node.xpath("xmlns:Default[@Extension='#{ext}']", 'xmlns' => CONTENT_TYPES_NS)
+      return unless existing.empty?
+
+      default_node = Nokogiri::XML::Node.new('Default', content_types)
+      default_node['Extension'] = ext
+      default_node['ContentType'] = content_type
+      types_node.add_child(default_node)
+      @replace[CONTENT_TYPES_PATH] = content_types.serialize(save_with: 0)
+    end
+
+    def insert_drawing_at_paragraph(paragraph, image_bytes, fit:, width_cm:, height_cm:, insert_after:)
+      ext = extension_for_image_bytes(image_bytes)
+      entry_path = next_generated_media_path(ext)
+      relationship_id = next_relationship_id
+
+      add_image_relationship(relationship_id, entry_path)
+      replace_entry(entry_path, image_bytes)
+      ensure_content_type_default(ext)
+
+      cx, cy = initial_extent_emus(width_cm, height_cm, image_bytes)
+      docpr_id = next_docpr_id
+      name = "Image #{docpr_id}"
+      run_node = build_drawing_run_node(relationship_id, cx, cy, docpr_id, name)
+
+      if insert_after
+        insert_after.add_next_sibling(run_node)
+      else
+        paragraph.add_child(run_node)
+      end
+
+      drawing_node = run_node.at_xpath('./w:drawing', XML_NAMESPACES)
+      apply_image_size_to_drawing(drawing_node, width_cm, height_cm, image_bytes) if width_cm || height_cm
+      apply_image_fit_to_drawing(drawing_node, fit, image_bytes) if fit != :stretch && width_cm && height_cm
+
+      {
+        relationship_id: relationship_id,
+        entry_path: entry_path,
+        fit: fit,
+        run_node: run_node
+      }
+    end
+
+    def initial_extent_emus(width_cm, height_cm, image_bytes)
+      if width_cm || height_cm
+        source_width, source_height = image_size_from_bytes(image_bytes)
+        source_ratio = source_width.to_f / source_height
+
+        if width_cm && height_cm
+          [(width_cm * CM_TO_EMU).round, (height_cm * CM_TO_EMU).round]
+        elsif width_cm
+          cx = (width_cm * CM_TO_EMU).round
+          [cx, (cx / source_ratio).round]
+        else
+          cy = (height_cm * CM_TO_EMU).round
+          [(cy * source_ratio).round, cy]
+        end
+      else
+        compute_default_image_emus(image_bytes)
+      end
+    end
+
+    def compute_default_image_emus(image_bytes)
+      source_width, source_height = image_size_from_bytes(image_bytes)
+      cx = (source_width / 96.0 * 914_400).round
+      cy = (source_height / 96.0 * 914_400).round
+
+      if cx > MAX_IMAGE_WIDTH_EMU
+        ratio = MAX_IMAGE_WIDTH_EMU.to_f / cx
+        cx = MAX_IMAGE_WIDTH_EMU
+        cy = (cy * ratio).round
+      end
+
+      [cx, cy]
+    end
+
+    def next_docpr_id
+      max_id = doc.xpath('//wp:docPr/@id', XML_NAMESPACES).map { |attr| attr.value.to_i }.max || 0
+      max_id + 1
+    end
+
+    def build_drawing_run_node(rid, cx, cy, docpr_id, name)
+      xml = <<~XML
+        <w:r xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+          <w:drawing>
+            <wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0">
+              <wp:extent cx="#{cx}" cy="#{cy}"/>
+              <wp:effectExtent l="0" t="0" r="0" b="0"/>
+              <wp:docPr id="#{docpr_id}" name="#{name}"/>
+              <wp:cNvGraphicFramePr>
+                <a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/>
+              </wp:cNvGraphicFramePr>
+              <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+                <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+                  <pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+                    <pic:nvPicPr>
+                      <pic:cNvPr id="#{docpr_id}" name="#{name}"/>
+                      <pic:cNvPicPr/>
+                    </pic:nvPicPr>
+                    <pic:blipFill>
+                      <a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="#{rid}"/>
+                      <a:stretch><a:fillRect/></a:stretch>
+                    </pic:blipFill>
+                    <pic:spPr>
+                      <a:xfrm><a:off x="0" y="0"/><a:ext cx="#{cx}" cy="#{cy}"/></a:xfrm>
+                      <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+                    </pic:spPr>
+                  </pic:pic>
+                </a:graphicData>
+              </a:graphic>
+            </wp:inline>
+          </w:drawing>
+        </w:r>
+      XML
+
+      fragment = Nokogiri::XML::DocumentFragment.parse(xml)
+      fragment.at_xpath('./w:r', XML_NAMESPACES)
     end
 
     def extension_for_image_bytes(bytes)

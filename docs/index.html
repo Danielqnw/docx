@@ -211,6 +211,50 @@
   .dg-img { fill:var(--accent-2-weak); stroke:var(--accent-2); stroke-width:1.5; }
   .dg-box { fill:none; stroke:var(--line); stroke-width:1.5; stroke-dasharray:4 4; }
 
+  /* interactive demos */
+  .demo { margin:26px 0; border:1px solid var(--line); border-radius:9px; overflow:hidden; background:var(--paper-2); box-shadow:var(--shadow); }
+  .demo-bar { display:flex; align-items:center; gap:12px; padding:11px 14px; border-bottom:1px solid var(--line); background:color-mix(in srgb, var(--paper-2) 60%, var(--paper)); flex-wrap:wrap; }
+  .demo-run { font-family:var(--mono); font-size:11.5px; letter-spacing:.05em; border:1px solid var(--accent); background:var(--accent); color:#fff; padding:6px 14px; border-radius:6px; cursor:pointer; transition:.18s; display:inline-flex; align-items:center; gap:8px; }
+  .demo-run:hover { filter:brightness(1.08); }
+  .demo-run .ar { display:inline-block; transition:transform .35s; font-size:9px; }
+  .demo.is-after .demo-run .ar { transform:rotate(180deg); }
+  .demo-steps { display:flex; align-items:center; gap:8px; font-family:var(--mono); font-size:11px; color:var(--ink-faint); }
+  .demo-steps .st { padding:2px 9px; border:1px solid var(--line); border-radius:20px; transition:.25s; white-space:nowrap; }
+  .demo-steps .st.on { color:var(--accent); border-color:var(--accent); background:var(--accent-weak); }
+  .demo-steps .sep { color:var(--ink-faint); opacity:.6; }
+  .demo-cap { margin-left:auto; font-family:var(--mono); font-size:10.5px; letter-spacing:.08em; color:var(--ink-faint); }
+  .demo-stage { display:grid; padding:24px 22px; }
+  .demo-face { grid-area:1/1; transition:opacity .5s ease, transform .5s ease; min-width:0; }
+  .demo-face--after { opacity:0; transform:translateY(10px); pointer-events:none; }
+  .demo.is-after .demo-face--before { opacity:0; transform:translateY(-10px); pointer-events:none; }
+  .demo.is-after .demo-face--after { opacity:1; transform:none; pointer-events:auto; }
+
+  .demo-paper { background:var(--paper); border:1px solid var(--line); border-radius:7px; padding:18px 20px; font-family:var(--body); color:var(--ink); }
+  .demo-paper .dp-h { font-family:var(--display); font-weight:700; font-size:19px; margin:0 0 12px; }
+  .demo-paper .dp-l { font-size:15.5px; line-height:1.75; margin:0 0 9px; color:var(--ink-soft); }
+  .demo-paper .dp-l:last-child { margin-bottom:0; }
+  .demo-paper .lbl { color:var(--ink); font-weight:500; }
+  .rchip { display:inline-block; font-family:var(--mono); font-size:12px; padding:1px 6px; border:1px dashed var(--accent); border-radius:5px; margin:0 2px; background:var(--accent-weak); color:var(--accent); vertical-align:1px; }
+  .runcap { font-family:var(--mono); font-size:10.5px; color:var(--ink-faint); margin-left:8px; }
+  .fillres { color:var(--ink); font-weight:600; }
+  .fillres.b { font-weight:800; }
+  .brk { display:inline-block; color:var(--accent-2); font-family:var(--mono); font-size:12px; opacity:.85; margin-left:4px; }
+  .demo-img { width:118px; height:78px; border-radius:6px; border:1px solid var(--accent-2); background:var(--accent-2-weak); display:inline-grid; place-items:center; color:var(--accent-2); vertical-align:middle; }
+  .demo-img svg { width:32px; height:32px; }
+  .demo-tbl { border-collapse:collapse; width:100%; font-size:14px; }
+  .demo-tbl th, .demo-tbl td { border:1px solid var(--line); padding:7px 11px; text-align:left; color:var(--ink-soft); }
+  .demo-tbl th { background:var(--paper-2); color:var(--ink-faint); font-family:var(--mono); font-size:10.5px; text-transform:uppercase; letter-spacing:.08em; }
+  .demo-tbl tr.tpl td { color:var(--accent); font-family:var(--mono); font-size:12.5px; background:var(--accent-weak); }
+  .demo-tbl tr.new td { background:var(--accent-2-weak); color:var(--ink); }
+  .chkrow { display:flex; align-items:center; gap:12px; font-size:16px; margin:9px 0; color:var(--ink); }
+  .chkbox { font-size:22px; line-height:1; width:26px; text-align:center; transition:.25s; color:var(--ink-faint); }
+  .chkbox.on { color:var(--accent); transform:scale(1.14); }
+  .demo-html { font-family:var(--mono); font-size:12.5px; line-height:1.7; color:var(--ink-soft); background:var(--paper); border:1px solid var(--line); border-radius:7px; padding:14px 16px; white-space:pre-wrap; word-break:break-word; }
+  .demo-html .tg { color:var(--accent); }
+  .mgrid { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; max-width:340px; }
+  .mcell { border:1px solid var(--line); border-radius:5px; padding:16px 0; text-align:center; font-family:var(--mono); font-size:12px; color:var(--ink-faint); background:var(--paper); }
+  .mcell.anchor { background:var(--accent-weak); border:1px solid var(--accent); color:var(--accent); display:grid; place-items:center; font-weight:600; font-size:12.5px; }
+
   /* back to top */
   #toTop {
     position:fixed; right:26px; bottom:26px; z-index:50;
@@ -253,7 +297,7 @@
   <aside id="sidebar">
     <div class="brand">
       <span class="logo">docx<span class="dot">.</span></span>
-      <span class="ver">v0.11.0</span>
+      <span class="ver">v0.12.0</span>
     </div>
     <p class="tagline" data-i18n="tagline"></p>
     <div class="controls">
@@ -314,6 +358,7 @@ const C = [
     {i:"merge", zh:["单元格合并","逻辑网格上合并/拆分，安全处理 gridSpan/vMerge"], en:["Cell merging","Merge/unmerge on a logical grid, safe gridSpan/vMerge"]},
     {i:"image", zh:["图片替换","按 ID、路径或占位符替换，支持表格内批量"], en:["Image replace","By id, path or placeholder; batch in tables"]},
     {i:"text", zh:["文本替换","保留格式替换，并可用正则捕获组"], en:["Text substitution","Preserve formatting, optional regex captures"]},
+    {i:"fill", zh:["模板填充","跨 run 替换、占位符插图、勾选框、render 入口"], en:["Template filling","Cross-run substitution, placeholder images, checkboxes, render"]},
     {i:"style", zh:["样式管理","新增/修改/删除段落与字符样式"], en:["Styles","Add/modify/remove paragraph & character styles"]},
     {i:"low", zh:["底层访问","需要时直接操作 Nokogiri 节点"], en:["Low-level","Reach the underlying Nokogiri nodes anytime"]}
   ]}
@@ -404,7 +449,8 @@ doc = Docx::Document.open(buffer)
   {type:"code", code:`doc = Docx::Document.open('example.docx')
 doc.paragraphs.each do |p|
   puts p.to_html
-end`}
+end`},
+  {type:"demo", render:"htmlout"}
 ]},
 
 { id:"tables", lvl:1, t:{zh:"表格",en:"Tables"}, blocks:[
@@ -489,7 +535,8 @@ doc.tables.each do |table|
   end
 end
 
-doc.save('tables-edited.docx')`}
+doc.save('tables-edited.docx')`},
+  {type:"demo", render:"tablerows"}
 ]},
 { id:"merging", lvl:2, t:{zh:"合并与拆分单元格",en:"Merging & unmerging cells"}, blocks:[
   {type:"p", zh:"合并使用<strong>逻辑网格坐标</strong>（<code>row</code>/<code>col</code> 从 0 开始），内容会保留在左上角的<em class='term'>锚点</em>单元格中。先看如何查看单元格及其合并状态：", en:"Cells merge using <strong>logical grid coordinates</strong> (zero-based). Content is kept in the top-left <em class='term'>anchor</em> cell. First, inspect a cell and its merge state:"},
@@ -542,6 +589,7 @@ anchor = table.cell_at(0, 0)
 anchor.unmerge! if anchor&.merge_anchor?
 
 doc.save('merged.docx')`},
+  {type:"demo", render:"merge"},
   {type:"note", variant:"important", zh:"合并只是展示层面的操作：它<strong>不会</strong>改变 <code>row_count</code> 或 <code>column_count</code>，因为表格的 <code>tblGrid</code> 保持不变。", en:"Merging is purely presentational: it does <strong>not</strong> change <code>row_count</code> or <code>column_count</code> — the <code>tblGrid</code> is untouched."},
   {type:"table",
    head:{zh:["方法","说明"], en:["Method","Description"]},
@@ -668,6 +716,148 @@ doc.save('with-images-edited.docx')`},
    ]}
 ]},
 
+{ id:"template-filling", lvl:1, t:{zh:"模板填充",en:"Template filling"}, blocks:[
+  {type:"p", zh:"面向「用运行时数据填充 .docx <em class='term'>模板</em>」的能力：跨 run 替换、向纯文本占位符插图、勾选框、多行换行，以及一站式 <code>render</code> 入口。全部<strong>通用</strong>——键即占位符名，不含任何业务语义。", en:"Capabilities for filling a .docx <em class='term'>template</em> with runtime data: cross-run substitution, inserting images at text-only placeholders, checkboxes, line breaks, and a one-shot <code>render</code> entry. Fully <strong>generic</strong> — keys are placeholder names, no business semantics."}
+]},
+{ id:"cross-run", lvl:2, t:{zh:"跨 run 文本替换",en:"Cross-run substitution"}, blocks:[
+  {type:"p", zh:"Word 常因拼写检查 / 格式痕迹把一个占位符（如 <code>{{name}}</code>）拆到多个相邻 run，导致 run 级的 <code>substitute</code> 匹配不到。段落级与文档级方法可<strong>跨 run</strong> 匹配，并保留命中区首个 run 的格式：", en:"Word often splits a placeholder like <code>{{name}}</code> across adjacent runs, so run-level <code>substitute</code> misses it. The paragraph- and document-level helpers match <strong>across runs</strong> while preserving the first matched run's formatting:"},
+  {type:"code",
+   zh:`doc = Docx::Document.open('template.docx')
+
+# 段落级（段落内跨 run 匹配）
+doc.paragraphs.first.substitute('{{title}}', '季度报告')
+
+# 全文替换，含表格单元格内段落
+doc.substitute_across_runs('{{name}}', 'Alice')
+
+# 支持带捕获组的正则
+doc.substitute_across_runs(/\\{\\{amount:(\\d+)\\}\\}/, 'USD \\1')
+
+# 多行：multiline 为 true 时 "\\n" 生成软换行 <w:br/>
+doc.substitute_across_runs('{{bio}}', "第一行\\n第二行", multiline: true)
+
+doc.save('filled.docx')`,
+   en:`doc = Docx::Document.open('template.docx')
+
+# Paragraph-level (matches across runs in the paragraph)
+doc.paragraphs.first.substitute('{{title}}', 'Quarterly Report')
+
+# Whole document, including table-cell paragraphs
+doc.substitute_across_runs('{{name}}', 'Alice')
+
+# Regexp with capture groups
+doc.substitute_across_runs(/\\{\\{amount:(\\d+)\\}\\}/, 'USD \\1')
+
+# Multiline: with multiline:true, "\\n" becomes a soft break <w:br/>
+doc.substitute_across_runs('{{bio}}', "line 1\\nline 2", multiline: true)
+
+doc.save('filled.docx')`},
+  {type:"demo", render:"subst"},
+  {type:"demo", render:"multiline"}
+]},
+{ id:"insert-images", lvl:2, t:{zh:"向占位符插入图片",en:"Insert images at placeholders"}, blocks:[
+  {type:"p", zh:"与要求单元格内<strong>已有图片</strong>的 <code>replace_image_by_placeholder_in_table</code> 不同，下面的方法可在纯文本占位符处<strong>从零</strong>插入图片（普通段落或表格单元格均可），并自动登记 media、关系与 <code>[Content_Types].xml</code>：", en:"Unlike <code>replace_image_by_placeholder_in_table</code>, which needs a <strong>pre-existing</strong> image, these create an image <strong>from scratch</strong> at a plain text placeholder (paragraph or table cell), auto-registering the media, relationship and <code>[Content_Types].xml</code>:"},
+  {type:"code",
+   zh:`# 在 {{photo}} 处插入一张（路径 / IO / StringIO）
+doc.insert_image_at_placeholder('{{photo}}', 'avatar.png',
+  fit: :contain, width: 3, height: 3)
+
+# 一个占位符处插入多张
+doc.insert_images_at_placeholder('{{gallery}}', ['a.png', 'b.png', 'c.png'])
+
+# 在段落（不限表格）中按占位符替换已有图片
+doc.replace_image_by_placeholder('{{logo}}', 'new-logo.png', fit: :cover)`,
+   en:`# Insert one where {{photo}} sits (path / IO / StringIO)
+doc.insert_image_at_placeholder('{{photo}}', 'avatar.png',
+  fit: :contain, width: 3, height: 3)
+
+# Insert several at one placeholder
+doc.insert_images_at_placeholder('{{gallery}}', ['a.png', 'b.png', 'c.png'])
+
+# Replace an existing image by placeholder in a paragraph (not only cells)
+doc.replace_image_by_placeholder('{{logo}}', 'new-logo.png', fit: :cover)`},
+  {type:"note", variant:"note", zh:"<code>source</code> 支持文件路径、<code>IO</code>/<code>StringIO</code>，支持 PNG/JPEG。未给 <code>width</code>/<code>height</code>（cm）时，按图片像素以 96 DPI 推断尺寸，并限制在页面内容宽度内。", en:"<code>source</code> accepts a file path, <code>IO</code>/<code>StringIO</code>; PNG/JPEG supported. Without <code>width</code>/<code>height</code> (cm), the size is inferred from pixels at 96&nbsp;DPI and capped to the page content width."},
+  {type:"demo", render:"image"}
+]},
+{ id:"checkboxes", lvl:2, t:{zh:"勾选框",en:"Checkboxes"}, blocks:[
+  {type:"p", zh:"支持两种常见模板写法：纯字符字形（<code>☐</code>→<code>☑</code>）与 Word 内容控件（<code>w:sdt</code> + <code>w14:checkbox</code>）。", en:"Two common template styles: character glyphs (<code>☐</code>→<code>☑</code>) and Word content controls (<code>w:sdt</code> + <code>w14:checkbox</code>)."},
+  {type:"code",
+   zh:`# 字符型：把 locator 所在段落里的 ☐（U+2610）切换为 ☑（U+2611）
+doc.set_checkbox('选项A', checked: true)
+
+# 自定义标记，如 "[ ]" -> "[x]"
+doc.set_checkbox('同意条款', checked: true,
+  unchecked_glyph: '[ ]', checked_glyph: '[x]')
+
+# Word 内容控件（w:sdt + w14:checkbox），按 tag 或 alias 匹配
+doc.check_content_control('opt_a', checked: true)`,
+   en:`# Character glyph: flip ☐ (U+2610) to ☑ (U+2611) in the locator's paragraph
+doc.set_checkbox('Option A', checked: true)
+
+# Custom markers, e.g. "[ ]" -> "[x]"
+doc.set_checkbox('Accept terms', checked: true,
+  unchecked_glyph: '[ ]', checked_glyph: '[x]')
+
+# Word content control (w:sdt + w14:checkbox), matched by tag or alias
+doc.check_content_control('opt_a', checked: true)`},
+  {type:"demo", render:"checkbox"}
+]},
+{ id:"render", lvl:2, t:{zh:"高层 render 入口",en:"High-level render"}, blocks:[
+  {type:"p", zh:"<code>render</code> 用一次数据驱动的调用编排上述所有操作，值的类型决定处理方式：", en:"<code>render</code> orchestrates everything above in one data-driven call; value types decide the handling:"},
+  {type:"code",
+   zh:`doc.render(
+  text:             { '{{name}}' => 'Alice', '{{bio}}' => "第一行\\n第二行" },
+  images:           { '{{photo}}' => 'avatar.png',
+                      '{{gallery}}' => ['a.png', 'b.png'] },
+  checkboxes:       { '选项A' => true },
+  content_controls: { 'opt_a' => true },
+  tables:           [{ placeholder_row: '{{row}}',
+                       rows: [ { '{{city}}' => 'Paris', '{{country}}' => 'France' },
+                               { '{{city}}' => 'Tokyo', '{{country}}' => 'Japan' } ] }],
+  multiline:      true,   # 文本中的 \\n 转为 <w:br/>
+  strip_unfilled: true,   # 清除未赋值的占位符
+  strict:         false,  # 为 false 时找不到的占位符会被跳过而非报错
+  image_options:  { fit: :contain }
+)
+
+doc.save('report.docx')`,
+   en:`doc.render(
+  text:             { '{{name}}' => 'Alice', '{{bio}}' => "line 1\\nline 2" },
+  images:           { '{{photo}}' => 'avatar.png',
+                      '{{gallery}}' => ['a.png', 'b.png'] },
+  checkboxes:       { 'Option A' => true },
+  content_controls: { 'opt_a' => true },
+  tables:           [{ placeholder_row: '{{row}}',
+                       rows: [ { '{{city}}' => 'Paris', '{{country}}' => 'France' },
+                               { '{{city}}' => 'Tokyo', '{{country}}' => 'Japan' } ] }],
+  multiline:      true,   # \\n in text becomes <w:br/>
+  strip_unfilled: true,   # clear placeholders left unfilled
+  strict:         false,  # when false, missing placeholders are skipped
+  image_options:  { fit: :contain }
+)
+
+doc.save('report.docx')`},
+  {type:"table",
+   head:{zh:["键","值类型 → 行为"], en:["Key","Value type → behaviour"]},
+   rows:[
+    {zh:["<code>text:</code>","占位符 → 字符串；跨 run 替换"], en:["<code>text:</code>","placeholder → string; cross-run substitution"]},
+    {zh:["<code>images:</code>","占位符 → 单张或数组；无图则插入，有图则替换"], en:["<code>images:</code>","placeholder → one or array; insert if empty, replace if present"]},
+    {zh:["<code>checkboxes:</code>","locator → 布尔；字符型勾选"], en:["<code>checkboxes:</code>","locator → bool; character checkbox"]},
+    {zh:["<code>content_controls:</code>","tag/alias → 布尔；内容控件勾选"], en:["<code>content_controls:</code>","tag/alias → bool; content-control checkbox"]},
+    {zh:["<code>tables:</code>","克隆模板行并逐行填充"], en:["<code>tables:</code>","clone a template row and fill per data row"]}
+   ]},
+  {type:"demo", render:"combo"}
+]},
+{ id:"cleanup", lvl:2, t:{zh:"清理占位符",en:"Cleaning up placeholders"}, blocks:[
+  {type:"p", zh:"清空遗留、未赋值的占位符（<strong>跨 run 安全</strong>，不影响已赋值内容）：", en:"Clear leftover, unfilled placeholders (<strong>cross-run aware</strong>; filled content untouched):"},
+  {type:"code",
+   zh:`doc.strip_unfilled_placeholders                        # 默认 /\\{\\{.*?\\}\\}/
+doc.strip_unfilled_placeholders(pattern: /%[A-Z_]+%/)  # 自定义 pattern`,
+   en:`doc.strip_unfilled_placeholders                        # default /\\{\\{.*?\\}\\}/
+doc.strip_unfilled_placeholders(pattern: /%[A-Z_]+%/)  # custom pattern`},
+  {type:"demo", render:"cleanup"}
+]},
+
 { id:"writing-text", lvl:1, t:{zh:"写入与替换文本",en:"Writing & substituting text"}, blocks:[
   {type:"p", zh:"集中演示书签插入、段落删除，以及两种文本替换（普通替换、带正则捕获组的替换）：", en:"Bookmark insertion, paragraph removal, and two substitution styles (plain and regex-capture):"},
   {type:"code",
@@ -753,7 +943,8 @@ red.bold = true
 d.paragraphs.each { |p| p.style = 'Red' }
 
 # Remove a style
-d.styles_configuration.remove_style('Red')`}
+d.styles_configuration.remove_style('Red')`},
+  {type:"demo", render:"style"}
 ]},
 { id:"style-attributes", lvl:2, t:{zh:"样式属性",en:"Style attributes"}, blocks:[
   {type:"p", zh:"按类别列出可设置的属性。标注「布尔」取值 <code>true</code>/<code>false</code>，标注「颜色」取十六进制颜色码（如 <code>FF0000</code>）。", en:"Attributes by category. <strong>bool</strong> = <code>true</code>/<code>false</code>; <strong>color</strong> = hex code (e.g. <code>FF0000</code>)."}
@@ -837,7 +1028,7 @@ p.at_xpath('//child::*')   # first child`}
     {zh:["<code>MergeConflict</code>","合并范围与已有合并重叠"],en:["<code>MergeConflict</code>","Merge range overlaps an existing merge"]},
     {zh:["<code>InvalidMergeTarget</code>","对非锚点/未合并单元格拆分"],en:["<code>InvalidMergeTarget</code>","Unmerge on a non-anchor / non-merged cell"]},
     {zh:["<code>ImageNotFound</code>","无图片匹配 ID / 路径"],en:["<code>ImageNotFound</code>","No image matches the id / path"]},
-    {zh:["<code>ImagePlaceholderNotFound</code>","未找到图片占位符文本"],en:["<code>ImagePlaceholderNotFound</code>","Image placeholder text not found"]}
+    {zh:["<code>ImagePlaceholderNotFound</code>","未找到占位符 / 定位文本（插图、勾选、render）"],en:["<code>ImagePlaceholderNotFound</code>","Placeholder / locator not found (image, checkbox, render)"]}
   ]}
 ]},
 
@@ -863,7 +1054,8 @@ const ICONS = {
   image:'<rect x="3" y="4" width="18" height="16" rx="1"/><circle cx="8.5" cy="9.5" r="1.8"/><path d="M21 16l-5-5L5 20"/>',
   text:'<path d="M4 7V5h16v2"/><path d="M9 19h6M12 5v14"/>',
   style:'<path d="M12 3a9 9 0 1 0 0 18c1.4 0 2-1 2-2 0-1.3-1-1.6-1-2.6 0-.8.7-1.4 1.6-1.4H17a4 4 0 0 0 4-4c0-4.4-4-8-9-8z"/><circle cx="7.5" cy="11" r="1"/><circle cx="12" cy="7.5" r="1"/><circle cx="16.5" cy="11" r="1"/>',
-  low:'<path d="M14.5 6.5a3.5 3.5 0 0 1-4.7 4.7L5 16l3 3 4.8-4.8a3.5 3.5 0 0 1 4.7-4.7l-2.3 2.3-2-2z"/>'
+  low:'<path d="M14.5 6.5a3.5 3.5 0 0 1-4.7 4.7L5 16l3 3 4.8-4.8a3.5 3.5 0 0 1 4.7-4.7l-2.3 2.3-2-2z"/>',
+  fill:'<rect x="4" y="3" width="16" height="18" rx="1"/><path d="M8 8h6M8 12h5"/><path d="M13.5 17l1.6 1.6L19 15"/>'
 };
 function svgIcon(name){ return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]||""}</svg>`; }
 
@@ -966,6 +1158,155 @@ function diagram(kind, lang){
   return "";
 }
 
+/* ============================ interactive demos ============================ */
+function demo(kind, lang){
+  const L=(zh,en)=> lang==="zh"?zh:en;
+  const img = '<span class="demo-img"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="15" rx="2"/><circle cx="8" cy="9.5" r="1.5"/><path d="M21 15.5l-5-5-6 6-3-3-4 4"/></svg></span>';
+  const paper = (inner)=> `<div class="demo-paper">${inner}</div>`;
+
+  if(kind==="subst"){
+    return {
+      steps:[L("模板 · 占位符跨 run","Template · split runs"), L("填充 · 格式保留","Filled · format kept")],
+      cap:"substitute_across_runs",
+      before: paper(
+        `<p class="dp-l"><span class="lbl">${L("姓名","Name")}：</span>`+
+        `<span class="rchip">{{</span><span class="rchip" style="font-weight:800">na</span><span class="rchip">me</span><span class="rchip">}}</span>`+
+        `<span class="runcap">${L("← Word 拆成 4 个 run","← Word split into 4 runs")}</span></p>`+
+        `<p class="dp-l" style="font-size:13px;color:var(--ink-faint)">run.substitute ${L("逐个 run 匹配 → 匹配不到","matches per run → misses")}</p>`
+      ),
+      after: paper(
+        `<p class="dp-l"><span class="lbl">${L("姓名","Name")}：</span><span class="fillres b">Alice</span>`+
+        `<span class="runcap">${L("← 写入首个 run，粗体保留","← written to first run, bold kept")}</span></p>`+
+        `<p class="dp-l" style="font-size:13px;color:var(--accent-2)">substitute_across_runs ✓</p>`
+      )
+    };
+  }
+  if(kind==="multiline"){
+    return {
+      steps:[L("默认 · \\n 被忽略","Default · \\n ignored"), L("multiline: true","multiline: true")],
+      cap:"<w:br/>",
+      before: paper(
+        `<p class="dp-l"><span class="lbl">${L("地址","Address")}：</span>${L("一号楼 3 层 302 室 邮编 100000","Bldg 1 · Floor 3 · Room 302 · 100000")}</p>`+
+        `<p class="dp-l" style="font-size:13px;color:var(--ink-faint)">"…\\n…\\n…" ${L("挤成一行","collapses onto one line")}</p>`
+      ),
+      after: paper(
+        `<p class="dp-l" style="margin-bottom:3px"><span class="lbl">${L("地址","Address")}：</span>${L("一号楼 3 层","Bldg 1 · Floor 3")}<span class="brk">↵</span></p>`+
+        `<p class="dp-l" style="margin:3px 0">${L("302 室","Room 302")}<span class="brk">↵</span></p>`+
+        `<p class="dp-l" style="margin:3px 0">${L("邮编 100000","ZIP 100000")}</p>`
+      )
+    };
+  }
+  if(kind==="image"){
+    return {
+      steps:[L("模板 · 纯文本占位符","Template · text placeholder"), L("从零插入图片","Image from scratch")],
+      cap:"insert_image_at_placeholder",
+      before: paper(
+        `<p class="dp-l"><span class="lbl">${L("照片","Photo")}：</span><span class="rchip">{{photo}}</span></p>`+
+        `<p class="dp-l" style="font-size:13px;color:var(--ink-faint)">${L("没有任何预置图片","no pre-existing image")}</p>`
+      ),
+      after: paper(
+        `<p class="dp-l" style="margin-bottom:6px"><span class="lbl">${L("照片","Photo")}：</span></p>`+
+        `<p class="dp-l">${img}</p>`+
+        `<p class="dp-l" style="font-size:12px;color:var(--accent-2)">+ word/media · + rels · + [Content_Types].xml</p>`
+      )
+    };
+  }
+  if(kind==="checkbox"){
+    return {
+      steps:[L("模板","Template"), L("勾选后","Checked")],
+      cap:"set_checkbox",
+      before: paper(
+        `<div class="chkrow"><span class="chkbox">☐</span>${L("选项 A","Option A")}</div>`+
+        `<div class="chkrow"><span class="chkbox">☐</span>${L("选项 B","Option B")}</div>`
+      ),
+      after: paper(
+        `<div class="chkrow"><span class="chkbox on">☑</span>${L("选项 A","Option A")}</div>`+
+        `<div class="chkrow"><span class="chkbox">☐</span>${L("选项 B","Option B")}</div>`
+      )
+    };
+  }
+  if(kind==="tablerows"){
+    const th=`<tr><th>${L("城市","City")}</th><th>${L("国家","Country")}</th></tr>`;
+    return {
+      steps:[L("1 个模板行","1 template row"), L("按数据展开","Expanded by data")],
+      cap:"tables:",
+      before: `<table class="demo-tbl"><thead>${th}</thead><tbody>`+
+        `<tr class="tpl"><td>{{city}}</td><td>{{country}}</td></tr></tbody></table>`,
+      after: `<table class="demo-tbl"><thead>${th}</thead><tbody>`+
+        `<tr class="new"><td>Paris</td><td>France</td></tr>`+
+        `<tr class="new"><td>Tokyo</td><td>Japan</td></tr></tbody></table>`
+    };
+  }
+  if(kind==="combo"){
+    const tpl = paper(
+      `<p class="dp-h"><span class="rchip">{{title}}</span></p>`+
+      `<p class="dp-l"><span class="lbl">${L("姓名","Name")}：</span><span class="rchip">{{name}}</span></p>`+
+      `<p class="dp-l"><span class="lbl">${L("照片","Photo")}：</span><span class="rchip">{{photo}}</span></p>`+
+      `<div class="chkrow"><span class="chkbox">☐</span>${L("已审核","Reviewed")}</div>`+
+      `<table class="demo-tbl" style="margin-top:8px"><tbody><tr class="tpl"><td>{{city}}</td><td>{{country}}</td></tr></tbody></table>`
+    );
+    const res = paper(
+      `<p class="dp-h">${L("季度报告","Quarterly Report")}</p>`+
+      `<p class="dp-l"><span class="lbl">${L("姓名","Name")}：</span><span class="fillres">Alice</span></p>`+
+      `<p class="dp-l"><span class="lbl">${L("照片","Photo")}：</span>${img}</p>`+
+      `<div class="chkrow"><span class="chkbox on">☑</span>${L("已审核","Reviewed")}</div>`+
+      `<table class="demo-tbl" style="margin-top:8px"><tbody>`+
+      `<tr class="new"><td>Paris</td><td>France</td></tr>`+
+      `<tr class="new"><td>Tokyo</td><td>Japan</td></tr></tbody></table>`
+    );
+    return { steps:[L("综合模板","Combined template"), L("一次 render()","After one render()")], cap:"render", before:tpl, after:res };
+  }
+  if(kind==="cleanup"){
+    return {
+      steps:[L("填充后 · 仍有残留","Filled · leftovers"), L("strip 清理后","After strip")],
+      cap:"strip_unfilled_placeholders",
+      before: paper(
+        `<p class="dp-l"><span class="lbl">${L("姓名","Name")}：</span><span class="fillres">Alice</span></p>`+
+        `<p class="dp-l"><span class="lbl">${L("电话","Phone")}：</span><span class="rchip">{{phone}}</span></p>`+
+        `<p class="dp-l"><span class="lbl">${L("备注","Note")}：</span><span class="rchip">{{note}}</span></p>`
+      ),
+      after: paper(
+        `<p class="dp-l"><span class="lbl">${L("姓名","Name")}：</span><span class="fillres">Alice</span><span class="runcap">${L("← 已赋值，原样保留","← filled, kept as-is")}</span></p>`+
+        `<p class="dp-l"><span class="lbl">${L("电话","Phone")}：</span></p>`+
+        `<p class="dp-l"><span class="lbl">${L("备注","Note")}：</span><span class="runcap">${L("← 未填占位符已清空","← unfilled placeholders cleared")}</span></p>`
+      )
+    };
+  }
+  if(kind==="htmlout"){
+    return {
+      steps:[L("文档段落（富文本）","Doc paragraph (rich)"), L("p.to_html 字符串","p.to_html string")],
+      cap:"to_html",
+      before: paper(
+        `<p class="dp-l" style="margin:0">${L("项目","Project")} <strong>docx</strong> — ${L("详见","see")} <a style="color:var(--accent);text-decoration:underline">${L("官网","the site")}</a></p>`
+      ),
+      after: `<div class="demo-html">&lt;<span class="tg">p</span>&gt;${L("项目","Project")} &lt;<span class="tg">strong</span>&gt;docx&lt;/<span class="tg">strong</span>&gt; — ${L("详见","see")} &lt;<span class="tg">a</span> href="…"&gt;${L("官网","the site")}&lt;/<span class="tg">a</span>&gt;&lt;/<span class="tg">p</span>&gt;</div>`
+    };
+  }
+  if(kind==="merge"){
+    const cell=(r,c)=>`<div class="mcell">${r},${c}</div>`;
+    const before = `<div class="mgrid">`+
+      cell(0,0)+cell(0,1)+cell(0,2)+cell(1,0)+cell(1,1)+cell(1,2)+cell(2,0)+cell(2,1)+cell(2,2)+
+      `</div>`;
+    const at=(r,c)=>`<div class="mcell" style="grid-column:${c+1};grid-row:${r+1}">${r},${c}</div>`;
+    const after = `<div class="mgrid">`+
+      at(0,0)+
+      `<div class="mcell anchor" style="grid-column:2/4;grid-row:1/3">${L("锚点 0,1","anchor 0,1")}</div>`+
+      at(1,0)+at(2,0)+at(2,1)+at(2,2)+
+      `</div>`;
+    return { steps:[L("3×3 网格","3×3 grid"), L("merge_cells(0,1,1,2)","merge_cells(0,1,1,2)")], cap:"merge_cells", before, after };
+  }
+  if(kind==="style"){
+    return {
+      steps:[L("默认段落","Default paragraph"), L("套用 Red 样式","Red style applied")],
+      cap:"p.style = 'Red'",
+      before: paper(`<p class="dp-l" style="margin:0">${L("第一季度业绩回顾","Q1 performance review")}</p>`),
+      after: paper(`<p class="dp-l" style="margin:0;color:#e11d1d;font-weight:800;font-size:20px">${L("第一季度业绩回顾","Q1 performance review")}</p>`+
+        `<p class="dp-l" style="margin:8px 0 0;font-size:12px;color:var(--ink-faint)">font_color: FF0000 · font_size: 20 · bold</p>`)
+    };
+  }
+  return { steps:["",""], cap:"", before:"", after:"" };
+}
+
 /* ============================ render ============================ */
 let lang = localStorage.getItem("docx-lang") || "zh";
 const tt = (o)=> o ? (o[lang] ?? o.en ?? o.zh) : "";
@@ -1010,6 +1351,31 @@ function renderBlock(b){
     const f=document.createElement("figure"); f.className="diagram";
     f.innerHTML = diagram(b.render, lang);
     return f;
+  }
+  if(b.type==="demo"){
+    const L=(zh,en)=> lang==="zh"?zh:en;
+    const spec=demo(b.render, lang);
+    const d=document.createElement("div"); d.className="demo";
+    d.innerHTML =
+      `<div class="demo-bar">`+
+        `<button class="demo-run" type="button"><span class="rt">${L("运行填充","Run")}</span><span class="ar">▲</span></button>`+
+        `<div class="demo-steps"><span class="st on">${spec.steps[0]}</span><span class="sep">→</span><span class="st">${spec.steps[1]}</span></div>`+
+        `<span class="demo-cap">${spec.cap}</span>`+
+      `</div>`+
+      `<div class="demo-stage">`+
+        `<div class="demo-face demo-face--before">${spec.before}</div>`+
+        `<div class="demo-face demo-face--after">${spec.after}</div>`+
+      `</div>`;
+    const btn=d.querySelector(".demo-run");
+    const sts=d.querySelectorAll(".demo-steps .st");
+    const rt=d.querySelector(".demo-run .rt");
+    btn.addEventListener("click",()=>{
+      const after=d.classList.toggle("is-after");
+      sts[0].classList.toggle("on", !after);
+      sts[1].classList.toggle("on", after);
+      rt.textContent = after ? L("重置","Reset") : L("运行填充","Run");
+    });
+    return d;
   }
   return document.createElement("span");
 }
