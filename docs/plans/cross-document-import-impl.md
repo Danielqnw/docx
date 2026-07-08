@@ -145,14 +145,25 @@ P3 R5(书签/批注) + R2 等价比较放宽 + 性能索引 + R6 收尾
 
 ---
 
-## 5. P3 — 收尾与健壮性
+## 5. P3 — 收尾与健壮性 ✅ 已完成 2026-07-08
 
-- [ ] R5.5 书签/批注 id：`bookmarkStart/bookmarkEnd @w:id`、批注/尾注引用 id 按 `bookmark_id_offset` 偏移（偏移量 = target 现有最大 id + 1）。
-- [ ] R2.7 等价比较放宽：忽略属性顺序 / 无意义空白的规范化比较。
-- [ ] Perf.1 styles/numbering 的 id→node 索引在 importer 内建立（若 P1 未做全）；media/映射按 source 缓存。
-- [ ] R6.6 幂等复测：重复导入同 style/num/media 命中已有映射，无重复定义。
+> 落地记录：P3-1（书签 id 隔离）→ 既有 spec Tempfile flaky 稳定化 → P3-2（编号→样式依赖闭包）→ P3-3（等价比较放宽 + 幂等/latentStyles 测试 + 常量告警清零），各自 commit。
+> 全量 **307 examples, 0 failures**，默认 + seed 1 + seed 60631 稳定，且 `already initialized constant` 告警清零。
 
-**P3 验收（需求 §6.6/7）**：书签 id 无冲突；产物无重复 styleId/numId。
+- [x] R5.5 书签 id：`bookmarkStart/bookmarkEnd @w:id` 按 `bookmark_id_offset`（= target 现有最大 id + 1）偏移，成对一致。（批注/尾注引用 id 涉及独立 comments/footnotes 部件导入，未在本轮实现——见下方遗留。）
+- [x] R2.7 等价比较放宽：`normalize_style_xml` 比较前剥离空白 + 排序属性，忽略属性顺序/无意义空白。
+- [x] Perf.1 styles/numbering/media 的 id→node 索引与映射均在各 importer 内建立并按 source 缓存（P1/P2 即已具备）。
+- [x] R6.6 幂等复测：同一 importer 重复导入同 node → 无重复 style/num/media 定义。
+- [x] 编号→样式反向依赖闭包（P3-2）：abstractNum 的 styleLink/numStyleLink/lvl·pStyle 触发样式导入并改写。
+- [x] latentStyles：保留 target 的、不导入 source 的（需求允许），有测试固化。
+- [x] 测试卫生：既有 Tempfile GC flaky 修复 + 常量告警清零。
+
+**P3 验收（需求 §6.6/7）**：书签 id 无冲突 ✅；产物无重复 styleId/numId ✅。
+
+### 未实现 / 后续可选（超出 R1–R6 原始范围）
+- **批注/尾注（comments.xml / footnotes.xml）整体导入**：正文里的 `w:commentReference` 等 id 偏移需连同独立部件一起导入，属新部件类型，本轮未做。
+- **R2 latentStyles 深度合并**（当前仅保留 target）。
+- Word/LibreOffice 真机打开校验（需求 §6.8 的人工/GUI 验证部分）：已用 save→reopen + 无悬空引用断言覆盖结构合法性，真机视觉校验需人工。
 
 ---
 
