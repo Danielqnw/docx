@@ -2,7 +2,8 @@
 
 require 'spec_helper'
 require 'docx/document'
-require 'tempfile'
+require 'securerandom'
+require 'tmpdir'
 
 describe 'table unmerge API' do
   fixtures_path = File.join('spec/fixtures/tables')
@@ -30,9 +31,7 @@ describe 'table unmerge API' do
   end
 
   def round_trip_without_stderr(doc)
-    temp_file = Tempfile.new(['table_unmerge', '.docx'])
-    temp_path = temp_file.path
-    temp_file.close
+    temp_path = File.join(Dir.tmpdir, "table_unmerge_#{SecureRandom.hex(8)}.docx")
 
     begin
       doc.save(temp_path)

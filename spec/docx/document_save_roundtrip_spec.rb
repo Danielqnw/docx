@@ -2,7 +2,8 @@
 
 require 'spec_helper'
 require 'docx'
-require 'tempfile'
+require 'securerandom'
+require 'tmpdir'
 
 describe Docx::Document, '#save round-trip' do
   fixtures_path = 'spec/fixtures'
@@ -24,9 +25,7 @@ describe Docx::Document, '#save round-trip' do
     original = Docx::Document.open(path)
     snapshot = document_snapshot(original)
 
-    temp_file = Tempfile.new(['docx_roundtrip', '.docx'])
-    temp_path = temp_file.path
-    temp_file.close
+    temp_path = File.join(Dir.tmpdir, "docx_roundtrip_#{SecureRandom.hex(8)}.docx")
 
     original.save(temp_path)
     reopened = Docx::Document.open(temp_path)
@@ -56,7 +55,7 @@ describe Docx::Document, '#save round-trip' do
 
   context 'with a script-generated table fixture' do
     let(:generated_path) do
-      path = Tempfile.new(['table_fixture_builder', '.docx']).path
+      path = File.join(Dir.tmpdir, "table_fixture_builder_#{SecureRandom.hex(8)}.docx")
       TableFixtureBuilder.plain_3x3(path)
       path
     end

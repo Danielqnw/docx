@@ -2,7 +2,9 @@
 
 require 'spec_helper'
 require 'docx'
+require 'securerandom'
 require 'tempfile'
+require 'tmpdir'
 require 'stringio'
 
 describe Docx::Document do
@@ -509,7 +511,7 @@ describe Docx::Document do
 
   describe 'replacing contents' do
     let(:replacement_file_path) { @fixtures_path + '/replacement.png' }
-    let(:temp_file_path) { Tempfile.new(['docx_gem', '.docx']).path }
+    let(:temp_file_path) { File.join(Dir.tmpdir, "docx_gem_#{SecureRandom.hex(8)}.docx") }
     let(:entry_path) { 'word/media/image1.png' }
     let(:doc) { Docx::Document.open(@fixtures_path + '/replacement.docx') }
 
