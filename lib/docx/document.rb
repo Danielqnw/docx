@@ -574,6 +574,32 @@ module Docx
       @numbering
     end
 
+    # Import a body node from +source_doc+ with style/numbering isolation.
+    # Returns a node in this document's context, ready to insert.
+    def import_node(source_doc, node, importer: nil, fallback: true)
+      importer ||= (@merge_importers ||= {})[source_doc] ||= Merge::Importer.new(self, source_doc)
+      importer.import(node)
+    rescue StandardError => e
+      raise unless fallback
+
+      warn("Docx::Document#import_node failed: #{e.message}")
+      node.dup(1)
+    end
+
+    # Import a node from +source_doc+ and insert it before +anchor_node+.
+    def import_before(source_doc, node, anchor_node)
+      imported = import_node(source_doc, node)
+      anchor_node.add_previous_sibling(imported)
+      imported
+    end
+
+    # Import a node from +source_doc+ and insert it after +anchor_node+.
+    def import_after(source_doc, node, anchor_node)
+      imported = import_node(source_doc, node)
+      anchor_node.add_next_sibling(imported)
+      imported
+    end
+
     private
 
     def with_strict_rescue(strict)

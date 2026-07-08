@@ -2,7 +2,8 @@
 
 require 'spec_helper'
 require 'docx'
-require 'tempfile'
+require 'securerandom'
+require 'tmpdir'
 require 'zip'
 require 'stringio'
 
@@ -44,11 +45,9 @@ describe Docx::Merge::NumberingImporter do
   end
 
   def save_to_tempfile(doc)
-    temp_file = Tempfile.new(['numbering_importer', '.docx'])
-    temp_path = temp_file.path
-    temp_file.close
-    doc.save(temp_path)
-    temp_path
+    path = File.join(Dir.tmpdir, "docx_merge_#{SecureRandom.hex(8)}.docx")
+    doc.save(path)
+    path
   end
 
   def wrap_numbering(*children)
