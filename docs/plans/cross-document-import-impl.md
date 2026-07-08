@@ -123,7 +123,14 @@ P3 R5(书签/批注) + R2 等价比较放宽 + 性能索引 + R6 收尾
 
 ---
 
-## 4. P2 — 媒体/关系（内嵌图片）
+## 4. P2 — 媒体/关系（内嵌图片）✅ 已完成 2026-07-08
+
+> 落地记录：P2-1（`lib/docx/merge/media_importer.rb` + NodeRewriter rId 改写）→ P2-2（Importer 接入 MediaImporter + 含内嵌图片端到端集成测试），各自 commit。
+> 全量 **291 examples, 0 failures**，默认 + seed 60631 稳定。
+> MediaImporter 构造时预读缓存 source media（落实 P0 定稿策略）；内部图片不重名落盘 + content-type + 新 rId，外部关系走 External 不复制，media 按 source 路径去重。
+> 端到端断言：save→reopen 后 media 字节一致、无悬空 rId（`reopened.images` 可解析）、r:/a: 命名空间正确。
+>
+> **遗留（非阻断）**：P2-1/P2-2 的两个 merge spec 在顶层定义了同名常量（FIXTURES_PATH/RELS_NS 等）产生 `already initialized constant` 告警（与仓库既有 XML_NS 同类噪音），可在 P3 一并清理。
 
 新增 `lib/docx/merge/media_importer.rb`：
 
