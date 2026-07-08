@@ -58,7 +58,17 @@ P3 R5(书签/批注) + R2 等价比较放宽 + 性能索引 + R6 收尾
 
 ---
 
-## 3. P1 — 样式/编号隔离（核心价值）
+## 3. P1 — 样式/编号隔离（核心价值）✅ 已完成 2026-07-08
+
+> 落地记录：R1a→R2→R3→R5(part)→R6(part) 逐任务实现并各自 commit（分支 feature/cross-document-import）。
+> 全量测试 **277 examples, 0 failures**，多 seed（1/42/60631/12345）稳定。
+> 新增文件：`lib/docx/merge/{importer,styles_importer,numbering_importer,node_rewriter}.rb`；
+> `Docx::Document` 新增 `add_part`/`add_relationship`/`ensure_default_content_type`/`ensure_numbering!`/`import_node`/`import_before`/`import_after`。
+>
+> **P1 期间发现、留待后续的已知缺口（不影响 P1 验收）**：
+> - numbering 的 `w:abstractNum/w:lvl/w:pStyle` 引用的段落样式未随 style_id_map 改写（R3 仅改 styleLink/numStyleLink）。若该 pStyle 在 target 被改名会悬空 → 归入 P3。
+> - numbering 的 numStyleLink/styleLink 指向的 styleId，若未被正文直接引用则不会被 StylesImporter 导入 → 归入 P3（编号→样式反向依赖闭包）。
+> - R2 latentStyles 合并未做（保留 target 的）→ 需求已允许，P3 视需要再补。
 
 ### R1a 存盘链路补全（前置）
 
