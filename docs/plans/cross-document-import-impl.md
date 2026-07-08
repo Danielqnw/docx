@@ -74,11 +74,11 @@ P3 R5(书签/批注) + R2 等价比较放宽 + 性能索引 + R6 收尾
 
 改 `lib/docx/document.rb`：
 
-- [ ] R1a.1 新增通用 `add_part(zip_path, content_type, bytes)`：写入 `@replace[zip_path] = bytes`；若给了 `content_type` 则登记 `[Content_Types].xml` 的 `Override`（区别于按扩展名的 `Default`）。
-- [ ] R1a.2 新增通用 `add_relationship(type, target, mode: nil) -> rId`：复用 `next_relationship_id` 的自增逻辑，支持 `TargetMode="External"`；返回新 rId。把现有 `add_image_relationship` 改为它的薄封装。
-- [ ] R1a.3 新增 `ensure_default_content_type(ext, content_type)`：泛化现有 `ensure_content_type_default`，扩展名表补 `emf/wmf/tiff` 等。
-- [ ] R1a.4 **styles 回写同源**：让 `update` 直接序列化 `@styles`，或让 `styles_configuration` 持有 `@styles`（非 dup）。目标：importer 改 `@styles` DOM 后能被写出。加一条回归测试防丢改。
-- [ ] R1a.5 **numbering 新建**：新增 `ensure_numbering!`——目标无 `@numbering` 时创建骨架 `<w:numbering>`，通过 `add_part` 注册 content-type Override + 通过 `add_relationship` 加 `numbering` 关系；`update` 需能写出新建的 `@numbering`。
+- [x] R1a.1 新增通用 `add_part(zip_path, content_type, bytes)`：写入 `@replace[zip_path] = bytes`；若给了 `content_type` 则登记 `[Content_Types].xml` 的 `Override`（区别于按扩展名的 `Default`）。
+- [x] R1a.2 新增通用 `add_relationship(type, target, mode: nil) -> rId`：复用 `next_relationship_id` 的自增逻辑，支持 `TargetMode="External"`；返回新 rId。把现有 `add_image_relationship` 改为它的薄封装。
+- [x] R1a.3 新增 `ensure_default_content_type(ext, content_type)`：泛化现有 `ensure_content_type_default`，扩展名表补 `emf/wmf/tiff` 等。
+- [x] R1a.4 **styles 回写同源**：让 `update` 直接序列化 `@styles`，或让 `styles_configuration` 持有 `@styles`（非 dup）。目标：importer 改 `@styles` DOM 后能被写出。加一条回归测试防丢改。
+- [x] R1a.5 **numbering 新建**：新增 `ensure_numbering!`——目标无 `@numbering` 时创建骨架 `<w:numbering>`，通过 `add_part` 注册 content-type Override + 通过 `add_relationship` 加 `numbering` 关系；`update` 需能写出新建的 `@numbering`。
 
 **验收**：单元测试——空白目标文档 `add_part` 一个新条目后 `save`，解压能读到该条目；`@styles`/`@numbering` 改动能落盘。
 
@@ -86,38 +86,38 @@ P3 R5(书签/批注) + R2 等价比较放宽 + 性能索引 + R6 收尾
 
 新增 `lib/docx/merge/styles_importer.rb`：
 
-- [ ] R2.1 建 target styles 的 `id→node` 与 `name→node` 索引（避免 O(n²)）。
-- [ ] R2.2 按需闭包导入：入口是正文实际引用的 styleId，沿 `basedOn`/`next`/`link` 递归（最多 10 层防环）。
-- [ ] R2.3 去重三分支：同 id 且等价→复用；同 id 不等价→改名（`m{seq}_{原id}`）导入；无此 id→原样导入。产出 `style_id_map`。
-- [ ] R2.4 等价比较：P1 先用「规范化字符串严格相等」（去 style 节点无意义空白），放宽留 P3。
-- [ ] R2.5 依赖改写：导入的 style 内 `basedOn/next/link` 按 `style_id_map` 改写；`link` 两端同进退。
-- [ ] R2.6 顺序合法：`docDefaults → latentStyles → style*`，导入的 style 追加到 `style*` 末尾；不动 target 的 `docDefaults`；`latentStyles` 按 `w:name` 保留 target 的。
+- [x] R2.1 建 target styles 的 `id→node` 索引（避免 O(n²)）。（`name→node` 索引未做——本实现不依赖 name 查找，故省略。）
+- [x] R2.2 按需闭包导入：入口是正文实际引用的 styleId，沿 `basedOn`/`next`/`link` 递归（最多 10 层防环）。
+- [x] R2.3 去重三分支：同 id 且等价→复用；同 id 不等价→改名（`m{seq}_{原id}`）导入；无此 id→原样导入。产出 `style_id_map`。
+- [x] R2.4 等价比较：P1 用规范化（canonicalize）比较，P3-3 进一步放宽（剥空白 + 排序属性）。
+- [x] R2.5 依赖改写：导入的 style 内 `basedOn/next/link` 按 `style_id_map` 改写；`link` 两端同进退。
+- [x] R2.6 顺序合法：`docDefaults → latentStyles → style*`，导入的 style 追加到 `style*` 末尾；不动 target 的 `docDefaults`；`latentStyles` 保留 target 的。
 
 ### R3 编号导入器
 
 新增 `lib/docx/merge/numbering_importer.rb`：
 
-- [ ] R3.1 target 无 numbering → 调 `ensure_numbering!`。
-- [ ] R3.2 `abstractNum` 偏移到 `target_max_abstract_id + 1`，产出 `abstract_num_id_map`；改写内部 `numStyleLink`/`styleLink` 指向的 styleId（用 `style_id_map`）。
-- [ ] R3.3 `num` 偏移到 `target_max_num_id + 1`，产出 `num_id_map`；改写 `abstractNumId/@w:val`（用 `abstract_num_id_map`）。
-- [ ] R3.4 P1 允许全量导入（正确性优先）；「仅导入被引用的链」留作可选优化。
-- [ ] R3.5 `w:numbering` 子元素顺序合法（`abstractNum*` 在前、`num*` 在后）。
+- [x] R3.1 target 无 numbering → 调 `ensure_numbering!`。
+- [x] R3.2 `abstractNum` 偏移到 `target_max_abstract_id + 1`，产出 `abstract_num_id_map`；改写内部 `numStyleLink`/`styleLink`（P3-2 起并含 `lvl/pStyle`，且触发样式导入闭包）。
+- [x] R3.3 `num` 偏移到 `target_max_num_id + 1`，产出 `num_id_map`；改写 `abstractNumId/@w:val`（用 `abstract_num_id_map`）。
+- [x] R3.4 实现为按需导入被引用的 num 及其 abstractNum 链（`import(num_id)`），另提供 `import_all` 全量导入。
+- [x] R3.5 `w:numbering` 子元素顺序合法（`abstractNum*` 在前、`num*` 在后）。
 
 ### R5(part) 正文引用改写（样式/编号）
 
 新增 `lib/docx/merge/node_rewriter.rb`：
 
-- [ ] R5.1 在 `node.dup` 之后、插入 target 之前，遍历子树。
-- [ ] R5.2 改写 `pStyle/rStyle/tblStyle @w:val`（用 `style_id_map`）、`numPr/numId @w:val`（用 `num_id_map`）；未命中映射保持原值。
-- [ ] R5.3 命名空间安全：以 target `@doc` 为上下文，前缀 `w:` 正确，序列化后无重复 `xmlns`。
+- [x] R5.1 在 `node.dup` 之后、插入 target 之前，遍历子树。
+- [x] R5.2 改写 `pStyle/rStyle/tblStyle @w:val`（用 `style_id_map`）、`numPr/numId @w:val`（用 `num_id_map`）；未命中映射保持原值。
+- [x] R5.3 命名空间安全：`dup(1)` 后前缀 `w:` 正确，序列化后无重复 `xmlns`（有断言）。
 
 ### R6(part) + 公开 API（P1 版）
 
-- [ ] R6.1 新增 `lib/docx/merge/importer.rb`：`Importer.new(target, source)` 持有四张映射表，本阶段用到 style/num 两组。
-- [ ] R6.2 `Importer#import(node)`：调 styles→numbering importer 建映射 → `dup` → node_rewriter 改写 → 返回在 target 上下文、可 `insert_before/after` 的节点。
-- [ ] R6.3 `Document#import_node/import_before/import_after`：按 source 对象缓存 importer。
-- [ ] R6.4 `lib/docx.rb` + require 新文件（沿用 autoload 风格）。
-- [ ] R6.5 失败回退：`import_node` 异常时 log + 回退到旧 `copy`，开关控制。
+- [x] R6.1 新增 `lib/docx/merge/importer.rb`：`Importer.new(target, source)` 持有各映射表（P2/P3 起含 rid_map、bookmark_id_offset）。
+- [x] R6.2 `Importer#import(node)`：调 styles→numbering→media importer 建映射 → `dup` → node_rewriter 改写 → 返回在 target 上下文、可 `insert_before/after` 的节点。
+- [x] R6.3 `Document#import_node/import_before/import_after`：按 source 对象缓存 importer。
+- [x] R6.4 `lib/docx.rb` + autoload 新文件。
+- [x] R6.5 失败回退：`import_node` 异常时 `warn` + 回退到 `dup`，由 `fallback:` 开关控制。
 
 **P1 验收（对应需求 §6 的 1/2/3/4/7/8）**：styleId 冲突改名、styleId 缺失原样导入、同名等价复用、numbering 偏移正确、多次导入映射复用不重复、产物无悬空 style/num 引用且 Word 可开。
 
@@ -134,12 +134,12 @@ P3 R5(书签/批注) + R2 等价比较放宽 + 性能索引 + R6 收尾
 
 新增 `lib/docx/merge/media_importer.rb`：
 
-- [ ] R4.1 收集被导入子树引用的 `r:embed`/`r:id`/`r:link`。
-- [ ] R4.2 在 source rels 按 rId 找 `Target`/`Type`。
-- [ ] R4.3 内部关系（图片）：从 source（按 P0 结论读 bytes）取二进制 → 以不重名文件名 `add_part` → `ensure_default_content_type` → `add_relationship` 得新 rId → 登记 `rid_map`。
-- [ ] R4.4 外部关系（超链接 `TargetMode=External`）：只 `add_relationship(type, 原Target, mode: :external)`，不复制 media。
-- [ ] R4.5 同一 media 多 rId 引用按 source rId 去重。
-- [ ] R5.4 node_rewriter 增加 `@r:embed/@r:id/@r:link` 改写（含 `a:blip`/`v:imagedata`/超链接/OLE）——注意 Nokogiri 带前缀属性读写与序列化的坑，重点测。
+- [x] R4.1 收集被导入子树引用的 `r:embed`/`r:id`/`r:link`（在 Importer 编排里收集）。
+- [x] R4.2 在 source rels 按 rId 找 `Target`/`Type`。
+- [x] R4.3 内部关系（图片）：构造时预读缓存 bytes → 以不重名文件名 `add_part` → `ensure_default_content_type` → `add_relationship` 得新 rId → 登记 `rid_map`。
+- [x] R4.4 外部关系（超链接 `TargetMode=External`）：只 `add_relationship(type, 原Target, mode: :external)`，不复制 media。
+- [x] R4.5 同一 media 多 rId 引用按 source 路径去重（映射到同一新 rId）。
+- [x] R5.4 node_rewriter 增加 `@r:embed/@r:id/@r:link` 改写（r 命名空间属性），保持前缀正确、有断言。
 
 **P2 验收（需求 §6.5）**：内嵌图片 source 导入后 media 落盘、rels/content-type 注册、正文 embed 指向新 rId，Word 正常显示。
 
@@ -178,19 +178,19 @@ P3 R5(书签/批注) + R2 等价比较放宽 + 性能索引 + R6 收尾
 | `lib/docx/merge/node_rewriter.rb`（新增） | P1/P2/P3 | R5 |
 | `lib/docx/merge/media_importer.rb`（新增） | P2 | R4 |
 | `lib/docx.rb` | P1 | require/autoload 新文件 |
-| `spec/docx/merge/*_spec.rb`（新增） | 各阶段 | 需求 §6 用例 |
-| `spec/fixtures/merge/*.docx`（新增） | 各阶段 | 成对 fixtures：样式冲突 / 带编号 / 内嵌图片 |
+| `spec/docx/merge/*_spec.rb`（新增） | 各阶段 | 需求 §6 用例（document_parts / styles_importer / numbering_importer / node_rewriter / importer / importer_image / importer_bookmark） |
+| ~~`spec/fixtures/merge/*.docx`~~ | — | 改为 spec 内基于 basic.docx 骨架动态构造，未新增二进制 fixtures（见 §7） |
 
 ---
 
-## 7. 需要新造的测试 fixtures
+## 7. 测试 fixtures（实现方式已调整）
 
-现有 `spec/fixtures/` 没有 merge 场景的成对样本，需新造：
+> **调整说明**：最终**未**新增二进制 `.docx` fixtures，而是在各 merge spec 里用「基于 `spec/fixtures/basic.docx` 骨架、按需覆盖/追加 `document.xml`/`styles.xml`/`numbering.xml`/`rels`/`media` 条目、经 `StringIO` open」的方式**动态构造** target/source。好处：场景可精确控制、可读、无需维护二进制样本。下列验收场景均已由该方式覆盖。
 
-- [ ] `merge_source_tblstyle.docx` + `merge_target_tblstyle.docx`：同名 `tblStyle` 但一无边框一有边框（验收 §6.1）。
-- [ ] `merge_source_numbering.docx`（带大纲编号）+ 一个无 `numbering.xml` 的 target（验收 §6.4）。
-- [ ] `merge_source_image.docx`（内嵌图片）（验收 §6.5）。
-- [ ] 同名/同 id 书签的 source+target（验收 §6.6）。
+- [x] 同名 `tblStyle` 一无边框一有边框（验收 §6.1）——`importer_spec.rb` / `styles_importer_spec.rb`。
+- [x] 带大纲编号 source + 无 `numbering.xml` 的 target（验收 §6.4）——`numbering_importer_spec.rb` / `importer_spec.rb`。
+- [x] 内嵌图片 source（验收 §6.5）——`importer_image_spec.rb` / `media_importer_spec.rb`（图片二进制用 `spec/fixtures/replacement.png`）。
+- [x] 同 id 书签的 source+target（验收 §6.6）——`importer_bookmark_spec.rb`。
 
 ---
 
