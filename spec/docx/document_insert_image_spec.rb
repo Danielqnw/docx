@@ -6,7 +6,9 @@ require 'zip'
 require 'stringio'
 
 RSpec.describe Docx::Document, '#insert_image_at_placeholder' do
-  XML_NS = Docx::Document::XML_NAMESPACES
+  def xml_ns
+    Docx::Document::XML_NAMESPACES
+  end
 
   def fake_png(w, h)
     "\x89PNG\r\n\x1A\n".b + "\x00\x00\x00\rIHDR".b + [w, h].pack('N2') + "\x08\x02\x00\x00\x00".b
@@ -34,11 +36,11 @@ RSpec.describe Docx::Document, '#insert_image_at_placeholder' do
   end
 
   def body_paragraph_with_drawing(doc)
-    doc.doc.at_xpath('//w:body/w:p[.//w:drawing]', XML_NS)
+    doc.doc.at_xpath('//w:body/w:p[.//w:drawing]', xml_ns)
   end
 
   def table_cell_with_drawing(doc)
-    doc.doc.at_xpath('//w:tc[.//w:drawing]', XML_NS)
+    doc.doc.at_xpath('//w:tc[.//w:drawing]', xml_ns)
   end
 
   describe 'insert_image_at_placeholder' do
@@ -54,18 +56,18 @@ RSpec.describe Docx::Document, '#insert_image_at_placeholder' do
 
       paragraph = body_paragraph_with_drawing(doc)
       expect(paragraph).not_to be_nil
-      expect(paragraph.xpath('.//w:drawing', XML_NS)).not_to be_empty
+      expect(paragraph.xpath('.//w:drawing', xml_ns)).not_to be_empty
 
-      blip = paragraph.at_xpath('.//a:blip/@r:embed', XML_NS)
+      blip = paragraph.at_xpath('.//a:blip/@r:embed', xml_ns)
       expect(blip.value).to eq(result[:relationship_id])
 
       expect(doc.images).to include(result[:relationship_id] => result[:entry_path])
 
-      paragraph_text = paragraph.xpath('.//w:t', XML_NS).map(&:text).join
+      paragraph_text = paragraph.xpath('.//w:t', xml_ns).map(&:text).join
       expect(paragraph_text).not_to include('{{photo}}')
 
       reopened = stream_and_reopen(doc)
-      expect(reopened.doc.at_xpath('//w:drawing', XML_NS)).not_to be_nil
+      expect(reopened.doc.at_xpath('//w:drawing', xml_ns)).not_to be_nil
     end
 
     it 'inserts a drawing in a table cell placeholder' do
@@ -76,17 +78,17 @@ RSpec.describe Docx::Document, '#insert_image_at_placeholder' do
 
       cell = table_cell_with_drawing(doc)
       expect(cell).not_to be_nil
-      expect(cell.xpath('.//w:drawing', XML_NS)).not_to be_empty
+      expect(cell.xpath('.//w:drawing', xml_ns)).not_to be_empty
 
-      blip = cell.at_xpath('.//a:blip/@r:embed', XML_NS)
+      blip = cell.at_xpath('.//a:blip/@r:embed', xml_ns)
       expect(blip.value).to eq(result[:relationship_id])
       expect(doc.images).to include(result[:relationship_id] => result[:entry_path])
 
-      cell_text = cell.xpath('.//w:t', XML_NS).map(&:text).join
+      cell_text = cell.xpath('.//w:t', xml_ns).map(&:text).join
       expect(cell_text).not_to include('{{img}}')
 
       reopened = stream_and_reopen(doc)
-      expect(reopened.doc.at_xpath('//w:tc//w:drawing', XML_NS)).not_to be_nil
+      expect(reopened.doc.at_xpath('//w:tc//w:drawing', xml_ns)).not_to be_nil
     end
 
     it 'keeps placeholder text when cleanup_placeholder is false' do
@@ -95,10 +97,10 @@ RSpec.describe Docx::Document, '#insert_image_at_placeholder' do
 
       doc.insert_image_at_placeholder('{{photo}}', StringIO.new(png), cleanup_placeholder: false)
 
-      paragraph = doc.doc.xpath('//w:p', XML_NS).find do |p|
-        p.xpath('.//w:t', XML_NS).map(&:text).join.include?('{{photo}}')
+      paragraph = doc.doc.xpath('//w:p', xml_ns).find do |p|
+        p.xpath('.//w:t', xml_ns).map(&:text).join.include?('{{photo}}')
       end
-      paragraph_text = paragraph.xpath('.//w:t', XML_NS).map(&:text).join
+      paragraph_text = paragraph.xpath('.//w:t', xml_ns).map(&:text).join
       expect(paragraph_text).to include('{{photo}}')
     end
 
@@ -140,13 +142,13 @@ RSpec.describe Docx::Document, '#insert_image_at_placeholder' do
       expect(results.map { |r| r[:relationship_id] }.uniq.length).to eq(2)
 
       paragraph = body_paragraph_with_drawing(doc)
-      drawings = paragraph.xpath('.//w:drawing', XML_NS)
+      drawings = paragraph.xpath('.//w:drawing', xml_ns)
       expect(drawings.length).to eq(2)
 
       image_rels = doc.image_relationships
       expect(image_rels.length).to eq(2)
 
-      paragraph_text = paragraph.xpath('.//w:t', XML_NS).map(&:text).join
+      paragraph_text = paragraph.xpath('.//w:t', xml_ns).map(&:text).join
       expect(paragraph_text).not_to include('{{photo}}')
     end
   end

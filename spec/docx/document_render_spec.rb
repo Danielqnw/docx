@@ -7,7 +7,9 @@ require 'zip'
 require 'stringio'
 
 RSpec.describe Docx::Document, '#render' do
-  XML_NS = Docx::Document::XML_NAMESPACES
+  def xml_ns
+    Docx::Document::XML_NAMESPACES
+  end
 
   def fake_png(w, h)
     "\x89PNG\r\n\x1A\n".b + "\x00\x00\x00\rIHDR".b + [w, h].pack('N2') + "\x08\x02\x00\x00\x00".b
@@ -64,9 +66,9 @@ RSpec.describe Docx::Document, '#render' do
         expect(body_text).to include('Name: Alice')
         expect(body_text).not_to include('{{name}}')
 
-        bio_paragraph = reopened.doc.xpath('//w:p[contains(.//w:t/text(), "Bio:")]', XML_NS).first
-        expect(bio_paragraph.xpath('.//w:br', XML_NS)).not_to be_empty
-        bio_text = bio_paragraph.xpath('.//w:t', XML_NS).map(&:text).join
+        bio_paragraph = reopened.doc.xpath('//w:p[contains(.//w:t/text(), "Bio:")]', xml_ns).first
+        expect(bio_paragraph.xpath('.//w:br', xml_ns)).not_to be_empty
+        bio_text = bio_paragraph.xpath('.//w:t', xml_ns).map(&:text).join
         expect(bio_text).to include('line1')
         expect(bio_text).to include('line2')
       end
@@ -113,18 +115,18 @@ RSpec.describe Docx::Document, '#render' do
         png = fake_png(200, 100)
         doc.render(images: { '{{photo}}' => StringIO.new(png) })
 
-        expect(doc.doc.at_xpath('//w:drawing', XML_NS)).not_to be_nil
+        expect(doc.doc.at_xpath('//w:drawing', xml_ns)).not_to be_nil
         expect(doc.images.values).to include(a_string_matching(%r{\Aword/media/image_generated_\d+\.png\z}))
 
-        paragraph = doc.doc.at_xpath('//w:p[.//w:drawing]', XML_NS)
-        paragraph_text = paragraph.xpath('.//w:t', XML_NS).map(&:text).join
+        paragraph = doc.doc.at_xpath('//w:p[.//w:drawing]', xml_ns)
+        paragraph_text = paragraph.xpath('.//w:t', xml_ns).map(&:text).join
         expect(paragraph_text).not_to include('{{photo}}')
 
         content_types = doc.instance_variable_get(:@replace)['[Content_Types].xml']
         expect(content_types).to include('image/png')
 
         reopened = reopen(doc)
-        expect(reopened.doc.at_xpath('//w:drawing', XML_NS)).not_to be_nil
+        expect(reopened.doc.at_xpath('//w:drawing', xml_ns)).not_to be_nil
       end
     end
 
@@ -136,11 +138,11 @@ RSpec.describe Docx::Document, '#render' do
         doc = Docx::Document.open(path)
         doc.render(checkboxes: { '选项A' => true })
 
-        checkbox_text = doc.doc.xpath('//w:p', XML_NS)[3].xpath('.//w:t', XML_NS).map(&:text).join
+        checkbox_text = doc.doc.xpath('//w:p', xml_ns)[3].xpath('.//w:t', xml_ns).map(&:text).join
         expect(checkbox_text).to eq("\u2611 选项A")
 
         reopened = reopen(doc)
-        reopened_text = reopened.doc.xpath('//w:p', XML_NS)[3].xpath('.//w:t', XML_NS).map(&:text).join
+        reopened_text = reopened.doc.xpath('//w:p', xml_ns)[3].xpath('.//w:t', xml_ns).map(&:text).join
         expect(reopened_text).to eq("\u2611 选项A")
       end
     end
@@ -220,15 +222,15 @@ RSpec.describe Docx::Document, '#render' do
         reopened = reopen(doc)
 
         expect(reopened.paragraphs.map(&:text).join).to include('Name: Alice')
-        expect(reopened.doc.at_xpath('//w:p[contains(.//w:t/text(), "Bio:")]//w:br', XML_NS)).not_to be_nil
-        expect(reopened.doc.at_xpath('//w:drawing', XML_NS)).not_to be_nil
+        expect(reopened.doc.at_xpath('//w:p[contains(.//w:t/text(), "Bio:")]//w:br', xml_ns)).not_to be_nil
+        expect(reopened.doc.at_xpath('//w:drawing', xml_ns)).not_to be_nil
 
         data_rows = table_data_rows(reopened)
         expect(data_rows.length).to eq(2)
         expect(cell_texts(data_rows[0]).map(&:strip)).to eq(['x1', 'y1'])
         expect(cell_texts(data_rows[1]).map(&:strip)).to eq(['x2', 'y2'])
 
-        checkbox_text = reopened.doc.xpath('//w:p', XML_NS)[3].xpath('.//w:t', XML_NS).map(&:text).join
+        checkbox_text = reopened.doc.xpath('//w:p', xml_ns)[3].xpath('.//w:t', xml_ns).map(&:text).join
         expect(checkbox_text).to eq("\u2611 选项A")
 
         full_text = reopened.to_s + reopened.tables.flat_map { |t| t.rows.flat_map { |r| r.cells.map(&:text) } }.join

@@ -217,6 +217,30 @@ describe Docx::Merge::Importer do
     ids.uniq
   end
 
+  def num_nodes(doc)
+    doc.numbering&.xpath('//w:numbering/w:num', xml_ns) || []
+  end
+
+  def latent_styles_xml(*exceptions)
+    exceptions_xml = exceptions.map { |name| %(<w:lsdException w:name="#{name}"/>) }.join("\n")
+    <<~XML
+      <w:latentStyles w:defLockedState="0" w:defUIPriority="99" w:defSemiHidden="1" w:defUnhideWhenUsed="1" w:defQFormat="0" w:count="#{exceptions.size}">
+      #{exceptions_xml}
+      </w:latentStyles>
+    XML
+  end
+
+  def wrap_styles_with_latent(latent_exceptions, *children)
+    <<~XML
+      <?xml version="1.0"?>
+      <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+        #{doc_defaults_xml}
+        #{latent_styles_xml(*latent_exceptions)}
+        #{children.join("\n")}
+      </w:styles>
+    XML
+  end
+
   def source_tbl_node(source)
     source.doc.at_xpath('//w:body/w:tbl', xml_ns)
   end
@@ -433,6 +457,66 @@ describe Docx::Merge::Importer do
       expect(serialized.scan('xmlns:w=').size).to eq(1)
     ensure
       File.delete(temp_path) if defined?(temp_path) && temp_path && File.exist?(temp_path)
+    end
+
+    it 'is idempotent when importing the same node twice' do
+      target = build_doc(
+        document_xml: target_document_xml,
+        styles_xml: wrap_styles(tbl_style_with_border('TblX', 'single'))
+      )
+      source = build_doc(
+        document_xml: source_document_xml(num_id: '1'),
+        styles_xml: wrap_styles(tbl_style_with_border('TblX', 'none')),
+        numbering_xml: wrap_numbering(abstract_num(0), num(1, 0))
+      )
+      source_tbl = source_tbl_node(source)
+      initial_style_count = style_nodes(target).size
+      initial_num_count = num_nodes(target).size
+
+      importer = described_class.new(target, source)
+      first = importer.import(source_tbl)
+      count_after_first = style_nodes(target).size
+      num_count_after_first = num_nodes(target).size
+      second = importer.import(source_tbl)
+
+      expect(style_nodes(target).size).to eq(count_after_first)
+      expect(style_nodes(target).size).to eq(initial_style_count + 1)
+      expect(num_nodes(target).size).to eq(num_count_after_first)
+      expect(num_nodes(target).size).to eq(initial_num_count + 1)
+      expect(first.at_xpath('.//w:tblStyle/@w:val', xml_ns).value).to eq('m1_TblX')
+      expect(second.at_xpath('.//w:tblStyle/@w:val', xml_ns).value).to eq('m1_TblX')
+      expect(first.at_xpath('.//w:numPr/w:numId/@w:val', xml_ns).value).to eq('1')
+      expect(second.at_xpath('.//w:numPr/w:numId/@w:val', xml_ns).value).to eq('1')
+      expect(importer.style_id_map).to eq('TblX' => 'm1_TblX')
+      expect(importer.num_id_map).to eq('1' => '1')
+    end
+
+    it 'preserves target latentStyles without merging source exceptions' do
+      source_latent = latent_styles_xml('SourceOnly')
+      target = build_doc(
+        document_xml: target_document_xml,
+        styles_xml: wrap_styles_with_latent('TargetOnly', tbl_style_with_border('TblX', 'single'))
+      )
+      source = build_doc(
+        document_xml: source_document_xml,
+        styles_xml: <<~XML
+          <?xml version="1.0"?>
+          <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+            #{doc_defaults_xml}
+            #{source_latent}
+            #{tbl_style_with_border('TblX', 'none')}
+          </w:styles>
+        XML
+      )
+      target_latent_before = target.styles.at_xpath('//w:latentStyles', xml_ns).to_xml(save_with: 0)
+
+      importer = described_class.new(target, source)
+      importer.import(source_tbl_node(source))
+
+      target_latent_after = target.styles.at_xpath('//w:latentStyles', xml_ns)
+      expect(target_latent_after.to_xml(save_with: 0)).to eq(target_latent_before)
+      expect(target_latent_after.at_xpath("./w:lsdException[@w:name='TargetOnly']", xml_ns)).not_to be_nil
+      expect(target_latent_after.at_xpath("./w:lsdException[@w:name='SourceOnly']", xml_ns)).to be_nil
     end
   end
 end

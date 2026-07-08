@@ -128,6 +128,63 @@ describe Docx::Merge::StylesImporter do
       expect(importer.style_id_map).to eq('SharedStyle' => 'SharedStyle')
     end
 
+    it 'treats styles with different attribute order as equivalent' do
+      target_style = <<~XML
+        <w:style w:type="table" w:styleId="TblOrder">
+          <w:name w:val="TblOrder"/>
+          <w:tblPr>
+            <w:tblBorders>
+              <w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/>
+            </w:tblBorders>
+          </w:tblPr>
+        </w:style>
+      XML
+      source_style = <<~XML
+        <w:style w:type="table" w:styleId="TblOrder">
+          <w:name w:val="TblOrder"/>
+          <w:tblPr>
+            <w:tblBorders>
+              <w:top w:sz="4" w:color="auto" w:space="0" w:val="single"/>
+            </w:tblBorders>
+          </w:tblPr>
+        </w:style>
+      XML
+      target = build_doc_with_styles(wrap_styles(target_style))
+      source = build_doc_with_styles(wrap_styles(source_style))
+      initial_count = style_nodes(target).size
+
+      importer = described_class.new(target, source)
+      mapped_id = importer.import('TblOrder')
+
+      expect(mapped_id).to eq('TblOrder')
+      expect(style_nodes(target).size).to eq(initial_count)
+      expect(importer.style_id_map).to eq('TblOrder' => 'TblOrder')
+    end
+
+    it 'treats styles with different insignificant whitespace as equivalent' do
+      target_style = <<~XML
+        <w:style w:type="paragraph" w:styleId="SpacedStyle">
+          <w:name w:val="Spaced"/>
+          <w:pPr>
+            <w:spacing w:after="200"/>
+          </w:pPr>
+        </w:style>
+      XML
+      source_style = <<~XML
+        <w:style w:type="paragraph" w:styleId="SpacedStyle"><w:name w:val="Spaced"/><w:pPr><w:spacing w:after="200"/></w:pPr></w:style>
+      XML
+      target = build_doc_with_styles(wrap_styles(target_style))
+      source = build_doc_with_styles(wrap_styles(source_style))
+      initial_count = style_nodes(target).size
+
+      importer = described_class.new(target, source)
+      mapped_id = importer.import('SpacedStyle')
+
+      expect(mapped_id).to eq('SpacedStyle')
+      expect(style_nodes(target).size).to eq(initial_count)
+      expect(importer.style_id_map).to eq('SpacedStyle' => 'SpacedStyle')
+    end
+
     it 'imports dependency closures and rewrites basedOn when parent conflicts' do
       target_parent = <<~XML
         <w:style w:type="paragraph" w:styleId="Parent">

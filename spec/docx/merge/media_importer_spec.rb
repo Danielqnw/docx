@@ -8,14 +8,28 @@ require 'zip'
 require 'stringio'
 
 describe Docx::Merge::MediaImporter do
-  FIXTURES_PATH = 'spec/fixtures'
-  RELS_NS = 'http://schemas.openxmlformats.org/package/2006/relationships'
-  CONTENT_TYPES_NS = Docx::Document::CONTENT_TYPES_NS
-  IMAGE_REL_TYPE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image'
-  HYPERLINK_REL_TYPE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink'
+  def fixtures_path
+    'spec/fixtures'
+  end
+
+  def rels_ns
+    'http://schemas.openxmlformats.org/package/2006/relationships'
+  end
+
+  def content_types_ns
+    Docx::Document::CONTENT_TYPES_NS
+  end
+
+  def image_rel_type
+    'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image'
+  end
+
+  def hyperlink_rel_type
+    'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink'
+  end
 
   def build_doc_with_rels_and_media(rels_xml, media_entries = {})
-    base = File.join(FIXTURES_PATH, 'basic.docx')
+    base = File.join(fixtures_path, 'basic.docx')
     buffer = Zip::OutputStream.write_buffer do |out|
       Zip::File.open(base) do |zf|
         zf.each do |entry|
@@ -60,20 +74,20 @@ describe Docx::Merge::MediaImporter do
   end
 
   def media_rels_xml(image_rid:, image_target:, duplicate_rid: nil, hyperlink_rid: nil, hyperlink_url: 'https://example.com/test')
-    duplicate_target = duplicate_rid ? %(<Relationship Id="#{duplicate_rid}" Type="#{IMAGE_REL_TYPE}" Target="#{image_target}"/>) : ''
-    hyperlink_rel = hyperlink_rid ? %(<Relationship Id="#{hyperlink_rid}" Type="#{HYPERLINK_REL_TYPE}" Target="#{hyperlink_url}" TargetMode="External"/>) : ''
+    duplicate_target = duplicate_rid ? %(<Relationship Id="#{duplicate_rid}" Type="#{image_rel_type}" Target="#{image_target}"/>) : ''
+    hyperlink_rel = hyperlink_rid ? %(<Relationship Id="#{hyperlink_rid}" Type="#{hyperlink_rel_type}" Target="#{hyperlink_url}" TargetMode="External"/>) : ''
 
     <<~XML
       <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-      <Relationships xmlns="#{RELS_NS}">
-        <Relationship Id="#{image_rid}" Type="#{IMAGE_REL_TYPE}" Target="#{image_target}"/>
+      <Relationships xmlns="#{rels_ns}">
+        <Relationship Id="#{image_rid}" Type="#{image_rel_type}" Target="#{image_target}"/>
         #{duplicate_target}
         #{hyperlink_rel}
       </Relationships>
     XML
   end
 
-  let(:replacement_bytes) { File.binread(File.join(FIXTURES_PATH, 'replacement.png')) }
+  let(:replacement_bytes) { File.binread(File.join(fixtures_path, 'replacement.png')) }
   let(:source_media_path) { 'word/media/source_image.png' }
   let(:source_image_rid) { 'rId20' }
   let(:duplicate_image_rid) { 'rId21' }
@@ -91,7 +105,7 @@ describe Docx::Merge::MediaImporter do
     )
   end
 
-  let(:target) { Docx::Document.open(File.join(FIXTURES_PATH, 'basic.docx')) }
+  let(:target) { Docx::Document.open(File.join(fixtures_path, 'basic.docx')) }
 
   describe '#import' do
     it 'imports internal image relationships with new media parts and content types' do
@@ -112,12 +126,12 @@ describe Docx::Merge::MediaImporter do
       expect(replace_before.keys).not_to include(new_media_entry)
 
       relation = target.instance_variable_get(:@rels).at_xpath("//xmlns:Relationship[@Id='#{new_rid}']")
-      expect(relation['Type']).to eq(IMAGE_REL_TYPE)
+      expect(relation['Type']).to eq(image_rel_type)
       expect(relation['Target']).to eq(new_media_entry.sub(%r{\Aword/}, ''))
       expect(relation['TargetMode']).to be_nil
 
       content_types = Nokogiri::XML(replace[Docx::Document::CONTENT_TYPES_PATH])
-      png_default = content_types.at_xpath("//xmlns:Default[@Extension='png']", 'xmlns' => CONTENT_TYPES_NS)
+      png_default = content_types.at_xpath("//xmlns:Default[@Extension='png']", 'xmlns' => content_types_ns)
       expect(png_default['ContentType']).to eq('image/png')
 
       temp_path = save_to_tempfile(target)
@@ -144,7 +158,7 @@ describe Docx::Merge::MediaImporter do
       expect(new_rid).not_to eq(hyperlink_rid)
 
       relation = target.instance_variable_get(:@rels).at_xpath("//xmlns:Relationship[@Id='#{new_rid}']")
-      expect(relation['Type']).to eq(HYPERLINK_REL_TYPE)
+      expect(relation['Type']).to eq(hyperlink_rel_type)
       expect(relation['Target']).to eq('https://example.com/test')
       expect(relation['TargetMode']).to eq('External')
 

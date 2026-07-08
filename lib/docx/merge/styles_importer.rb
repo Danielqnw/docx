@@ -136,9 +136,33 @@ module Docx
       end
 
       def normalize_style_xml(node)
-        node.canonicalize(Nokogiri::XML::Node::SaveOptions::AS_XML)
+        prepared = prepare_style_for_comparison(node.dup(1))
+        prepared.canonicalize(Nokogiri::XML::Node::SaveOptions::AS_XML)
       rescue StandardError
-        strip_whitespace_text_nodes(node.dup(1)).to_xml(save_with: Nokogiri::XML::Node::SaveOptions::AS_XML)
+        prepare_style_for_comparison(node.dup(1)).to_xml(save_with: Nokogiri::XML::Node::SaveOptions::AS_XML)
+      end
+
+      def prepare_style_for_comparison(node)
+        sort_element_attributes(strip_whitespace_text_nodes(node))
+      end
+
+      def sort_element_attributes(node)
+        return node unless node.element?
+
+        node.element_children.each { |child| sort_element_attributes(child) }
+
+        attrs = node.attribute_nodes
+        return node if attrs.empty?
+
+        sorted = attrs.sort_by { |attr| [attr.namespace&.href.to_s, attr.name.to_s] }
+        attrs.each(&:remove)
+        sorted.each { |attr| node[style_attribute_qname(attr)] = attr.value }
+        node
+      end
+
+      def style_attribute_qname(attr)
+        prefix = attr.namespace&.prefix
+        prefix ? "#{prefix}:#{attr.name}" : attr.name
       end
 
       def strip_whitespace_text_nodes(node)
