@@ -14,6 +14,7 @@ module Docx
       def initialize(target_doc, source_doc)
         @target_doc = target_doc
         @source_doc = source_doc
+        @bookmark_id_offset = compute_bookmark_id_offset
         @styles_importer = StylesImporter.new(target_doc, source_doc)
         @numbering_importer = NumberingImporter.new(
           target_doc,
@@ -22,6 +23,8 @@ module Docx
         )
         @media_importer = MediaImporter.new(target_doc, source_doc)
       end
+
+      attr_reader :bookmark_id_offset
 
       def import(node)
         collect_style_ids(node).each do |style_id|
@@ -40,7 +43,8 @@ module Docx
         NodeRewriter.new(
           style_id_map: @styles_importer.style_id_map,
           num_id_map: @numbering_importer.num_id_map,
-          rid_map: @media_importer.rid_map
+          rid_map: @media_importer.rid_map,
+          bookmark_id_offset: @bookmark_id_offset
         ).rewrite(imported)
       end
 
@@ -78,6 +82,14 @@ module Docx
 
       def collect_relationship_ids(node)
         node.xpath(RID_ATTRIBUTE_XPATH, RID_NS).map(&:value).uniq
+      end
+
+      def compute_bookmark_id_offset
+        ids = @target_doc.doc.xpath(
+          '//w:bookmarkStart/@w:id | //w:bookmarkEnd/@w:id',
+          XML_NAMESPACES
+        ).map(&:value).select { |val| val.match?(/\A\d+\z/) }.map(&:to_i)
+        ids.empty? ? 0 : ids.max + 1
       end
     end
   end

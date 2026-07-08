@@ -19,6 +19,7 @@ module Docx
         rewrite_style_references(node)
         rewrite_num_id_references(node)
         rewrite_rid_references(node)
+        rewrite_bookmark_ids(node)
         node
       end
 
@@ -53,6 +54,20 @@ module Docx
           next unless @rid_map.key?(attr.value)
 
           attr.value = @rid_map[attr.value]
+        end
+      end
+
+      def rewrite_bookmark_ids(node)
+        return if @bookmark_id_offset.zero?
+
+        node.xpath(
+          'self::w:bookmarkStart | .//w:bookmarkStart | self::w:bookmarkEnd | .//w:bookmarkEnd',
+          XML_NAMESPACES
+        ).each do |bookmark_node|
+          id_val = bookmark_node['w:id']
+          next unless id_val&.match?(/\A\d+\z/)
+
+          bookmark_node['w:id'] = (id_val.to_i + @bookmark_id_offset).to_s
         end
       end
     end

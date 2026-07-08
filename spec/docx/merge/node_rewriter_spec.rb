@@ -16,8 +16,13 @@ describe Docx::Merge::NodeRewriter do
     Nokogiri::XML(xml).root
   end
 
-  def rewriter(style_id_map: {}, num_id_map: {}, rid_map: {})
-    described_class.new(style_id_map: style_id_map, num_id_map: num_id_map, rid_map: rid_map)
+  def rewriter(style_id_map: {}, num_id_map: {}, rid_map: {}, bookmark_id_offset: 0)
+    described_class.new(
+      style_id_map: style_id_map,
+      num_id_map: num_id_map,
+      rid_map: rid_map,
+      bookmark_id_offset: bookmark_id_offset
+    )
   end
 
   describe '#rewrite' do
@@ -232,6 +237,64 @@ describe Docx::Merge::NodeRewriter do
 
       expect(serialized).to include('r:embed="rId9"')
       expect(serialized.scan('xmlns:r=').length).to eq(1)
+    end
+
+    it 'offsets bookmarkStart and bookmarkEnd ids by bookmark_id_offset' do
+      node = frag(<<~XML)
+        <w:p xmlns:w="#{w_ns}">
+          <w:bookmarkStart w:id="1" w:name="bm"/>
+          <w:r><w:t>text</w:t></w:r>
+          <w:bookmarkEnd w:id="1"/>
+        </w:p>
+      XML
+
+      rewriter(bookmark_id_offset: 10).rewrite(node)
+
+      expect(node.at_xpath('.//w:bookmarkStart', xml_ns)['w:id']).to eq('11')
+      expect(node.at_xpath('.//w:bookmarkEnd', xml_ns)['w:id']).to eq('11')
+    end
+
+    it 'leaves bookmark ids unchanged when bookmark_id_offset is zero' do
+      node = frag(<<~XML)
+        <w:p xmlns:w="#{w_ns}">
+          <w:bookmarkStart w:id="1" w:name="bm"/>
+          <w:bookmarkEnd w:id="1"/>
+        </w:p>
+      XML
+
+      rewriter(bookmark_id_offset: 0).rewrite(node)
+
+      expect(node.at_xpath('.//w:bookmarkStart', xml_ns)['w:id']).to eq('1')
+      expect(node.at_xpath('.//w:bookmarkEnd', xml_ns)['w:id']).to eq('1')
+    end
+
+    it 'skips non-integer bookmark ids' do
+      node = frag(<<~XML)
+        <w:p xmlns:w="#{w_ns}">
+          <w:bookmarkStart w:id="abc" w:name="bm"/>
+          <w:bookmarkEnd w:id="abc"/>
+        </w:p>
+      XML
+
+      rewriter(bookmark_id_offset: 10).rewrite(node)
+
+      expect(node.at_xpath('.//w:bookmarkStart', xml_ns)['w:id']).to eq('abc')
+      expect(node.at_xpath('.//w:bookmarkEnd', xml_ns)['w:id']).to eq('abc')
+    end
+
+    it 'preserves w:id namespace prefix in serialized bookmark output' do
+      node = frag(<<~XML)
+        <w:p xmlns:w="#{w_ns}">
+          <w:bookmarkStart w:id="1" w:name="bm"/>
+          <w:bookmarkEnd w:id="1"/>
+        </w:p>
+      XML
+
+      rewriter(bookmark_id_offset: 5).rewrite(node)
+      serialized = node.to_xml
+
+      expect(serialized).to include('w:id="6"')
+      expect(serialized.scan('xmlns:w=').length).to eq(1)
     end
   end
 end
