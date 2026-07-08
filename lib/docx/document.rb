@@ -40,8 +40,14 @@ module Docx
       'jpg' => 'image/jpeg',
       'jpeg' => 'image/jpeg',
       'gif' => 'image/gif',
-      'bmp' => 'image/bmp'
+      'bmp' => 'image/bmp',
+      'emf' => 'image/x-emf',
+      'wmf' => 'image/x-wmf',
+      'tiff' => 'image/tiff',
+      'tif' => 'image/tiff'
     }.freeze
+    NUMBERING_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml'
+    NUMBERING_REL_TYPE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering'
     XML_NAMESPACES = {
       'w' => 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
       'a' => 'http://schemas.openxmlformats.org/drawingml/2006/main',
@@ -517,7 +523,55 @@ module Docx
     end
 
     def styles_configuration
-      @styles_configuration ||= Elements::Containers::StylesConfiguration.new(@styles.dup)
+      @styles_configuration ||= Elements::Containers::StylesConfiguration.new(@styles)
+    end
+
+    def add_part(zip_path, content_type, bytes)
+      replace_entry(zip_path, bytes)
+      register_content_type_override(zip_path, content_type) if content_type
+      zip_path
+    end
+
+    def add_relationship(type, target, mode: nil, id: nil)
+      relationship_id = id || next_relationship_id
+      relationships_node = @rels.at_xpath('/xmlns:Relationships')
+      relation = Nokogiri::XML::Node.new('Relationship', @rels)
+      relation['Id'] = relationship_id
+      relation['Type'] = type
+      relation['Target'] = target
+      relation['TargetMode'] = 'External' if mode == :external
+      relationships_node.add_child(relation)
+      relationship_id
+    end
+
+    def ensure_default_content_type(ext, content_type)
+      xml = @replace[CONTENT_TYPES_PATH]
+      return unless xml
+
+      ext = ext.to_s.downcase
+      content_types = Nokogiri::XML(xml)
+      types_node = content_types.at_xpath('/xmlns:Types', 'xmlns' => CONTENT_TYPES_NS)
+      return unless types_node
+
+      existing = types_node.xpath("xmlns:Default[@Extension='#{ext}']", 'xmlns' => CONTENT_TYPES_NS)
+      return unless existing.empty?
+
+      default_node = Nokogiri::XML::Node.new('Default', content_types)
+      default_node['Extension'] = ext
+      default_node['ContentType'] = content_type
+      types_node.add_child(default_node)
+      @replace[CONTENT_TYPES_PATH] = content_types.serialize(save_with: 0)
+    end
+
+    def ensure_numbering!
+      if @numbering.nil?
+        @numbering = Nokogiri::XML(
+          '<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"></w:numbering>'
+        )
+        add_part('word/numbering.xml', NUMBERING_CONTENT_TYPE, @numbering.serialize(save_with: 0))
+        add_relationship(NUMBERING_REL_TYPE, 'numbering.xml')
+      end
+      @numbering
     end
 
     private
@@ -668,7 +722,7 @@ module Docx
     #++
     def update
       replace_entry 'word/document.xml', doc.serialize(save_with: 0)
-      replace_entry 'word/styles.xml', styles_configuration.serialize(save_with: 0)
+      replace_entry 'word/styles.xml', @styles.serialize(save_with: 0) if @styles
       replace_entry @rels_path, @rels.serialize(save_with: 0) if @rels_path && @rels
       DOCUMENT_PATHS.each do |attr_name, path|
         if path.match /\*/
@@ -1087,24 +1141,29 @@ module Docx
     end
 
     def ensure_content_type_default(ext)
-      xml = @replace[CONTENT_TYPES_PATH]
-      return unless xml
-
       ext = ext.to_s.downcase
       content_type = CONTENT_TYPE_MAPPINGS[ext]
       return unless content_type
+
+      ensure_default_content_type(ext, content_type)
+    end
+
+    def register_content_type_override(zip_path, content_type)
+      xml = @replace[CONTENT_TYPES_PATH]
+      return unless xml
 
       content_types = Nokogiri::XML(xml)
       types_node = content_types.at_xpath('/xmlns:Types', 'xmlns' => CONTENT_TYPES_NS)
       return unless types_node
 
-      existing = types_node.xpath("xmlns:Default[@Extension='#{ext}']", 'xmlns' => CONTENT_TYPES_NS)
+      part_name = "/#{zip_path}"
+      existing = types_node.xpath("xmlns:Override[@PartName='#{part_name}']", 'xmlns' => CONTENT_TYPES_NS)
       return unless existing.empty?
 
-      default_node = Nokogiri::XML::Node.new('Default', content_types)
-      default_node['Extension'] = ext
-      default_node['ContentType'] = content_type
-      types_node.add_child(default_node)
+      override_node = Nokogiri::XML::Node.new('Override', content_types)
+      override_node['PartName'] = part_name
+      override_node['ContentType'] = content_type
+      types_node.add_child(override_node)
       @replace[CONTENT_TYPES_PATH] = content_types.serialize(save_with: 0)
     end
 
@@ -1241,12 +1300,11 @@ module Docx
     end
 
     def add_image_relationship(relationship_id, entry_path)
-      relationships_node = @rels.at_xpath('/xmlns:Relationships')
-      relation = Nokogiri::XML::Node.new('Relationship', @rels)
-      relation['Id'] = relationship_id
-      relation['Type'] = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image'
-      relation['Target'] = entry_path.sub(%r{\Aword/}, '')
-      relationships_node.add_child(relation)
+      add_relationship(
+        'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image',
+        entry_path.sub(%r{\Aword/}, ''),
+        id: relationship_id
+      )
     end
   end
 end
