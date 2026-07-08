@@ -110,7 +110,134 @@ module Docx
         alias_method :style_id=, :style=
         alias_method :text, :to_s
 
+        # Replace match across all w:t nodes in paragraph order (cross-run).
+        # Preserves formatting of the first w:t in the matched span.
+        def substitute(match, replacement, multiline: false)
+          text_nodes = @node.xpath('.//w:t')
+          return if text_nodes.empty?
+
+          merged, node_ranges = build_merged_text(text_nodes)
+          matches = collect_substitute_matches(merged, match, replacement)
+          return if matches.empty?
+
+          matches.sort_by { |m| -m[:begin] }.each do |m|
+            apply_substitute_match(text_nodes, node_ranges, m, multiline: multiline)
+          end
+        end
+
         private
+
+        def build_merged_text(text_nodes)
+          merged = +''
+          ranges = text_nodes.map do |node|
+            start = merged.length
+            merged << node.content
+            { node: node, start: start, end: merged.length }
+          end
+          [merged, ranges]
+        end
+
+        def collect_substitute_matches(merged, match, replacement)
+          if match.is_a?(Regexp)
+            merged.enum_for(:scan, match).map do
+              md = Regexp.last_match
+              {
+                begin: md.begin(0),
+                end: md.end(0),
+                replacement: md[0].gsub(match, replacement)
+              }
+            end
+          else
+            matches = []
+            pos = 0
+            while (idx = merged.index(match, pos))
+              matches << {
+                begin: idx,
+                end: idx + match.length,
+                replacement: replacement
+              }
+              pos = idx + match.length
+            end
+            matches
+          end
+        end
+
+        def apply_substitute_match(text_nodes, node_ranges, match_info, multiline:)
+          match_begin = match_info[:begin]
+          match_end = match_info[:end]
+          replacement_text = match_info[:replacement]
+
+          affected = node_ranges.select { |nr| nr[:end] > match_begin && nr[:start] < match_end }
+          return if affected.empty?
+
+          first_nr = affected.first
+          last_nr = affected.last
+
+          prefix_len = match_begin - first_nr[:start]
+          prefix = first_nr[:node].content[0, prefix_len]
+
+          suffix_offset = match_end - last_nr[:start]
+          suffix = last_nr[:node].content[suffix_offset..-1] || ''
+
+          affected[1..-2].each { |nr| set_wt_content(nr[:node], '') }
+
+          if first_nr.equal?(last_nr)
+            write_replacement_to_node(
+              first_nr[:node],
+              prefix,
+              replacement_text,
+              suffix,
+              multiline: multiline
+            )
+          else
+            write_replacement_to_node(
+              first_nr[:node],
+              prefix,
+              replacement_text,
+              nil,
+              multiline: multiline
+            )
+            set_wt_content(last_nr[:node], suffix)
+          end
+        end
+
+        def write_replacement_to_node(t_node, prefix, replacement_text, suffix, multiline:)
+          if multiline && replacement_text.include?("\n")
+            write_multiline_replacement(t_node, prefix, replacement_text, suffix)
+          else
+            set_wt_content(t_node, prefix + replacement_text + (suffix || ''))
+          end
+        end
+
+        def write_multiline_replacement(t_node, prefix, replacement_text, suffix)
+          segments = replacement_text.split("\n", -1)
+          set_wt_content(t_node, prefix + segments.first)
+
+          insert_after = t_node
+          segments[1..].each do |segment|
+            br = Nokogiri::XML::Node.new('w:br', @node.document)
+            insert_after.add_next_sibling(br)
+            insert_after = br
+
+            new_t = Nokogiri::XML::Node.new('w:t', @node.document)
+            set_wt_content(new_t, segment)
+            insert_after.add_next_sibling(new_t)
+            insert_after = new_t
+          end
+
+          if suffix && !suffix.empty?
+            set_wt_content(insert_after, insert_after.content + suffix)
+          end
+        end
+
+        def set_wt_content(t_node, text)
+          t_node.content = text
+          if text =~ /\A\s|\s\z|  /
+            t_node['xml:space'] = 'preserve'
+          else
+            t_node.remove_attribute('xml:space')
+          end
+        end
 
         def style_property
           properties&.at_xpath('w:pStyle') || properties&.add_child('<w:pStyle/>').first

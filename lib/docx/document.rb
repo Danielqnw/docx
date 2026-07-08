@@ -32,6 +32,16 @@ module Docx
     }
     IMAGE_FIT_MODES = %i[cover contain stretch].freeze
     CM_TO_EMU = 360_000
+    MAX_IMAGE_WIDTH_EMU = 5_486_400
+    CONTENT_TYPES_NS = 'http://schemas.openxmlformats.org/package/2006/content-types'
+    CONTENT_TYPES_PATH = '[Content_Types].xml'
+    CONTENT_TYPE_MAPPINGS = {
+      'png' => 'image/png',
+      'jpg' => 'image/jpeg',
+      'jpeg' => 'image/jpeg',
+      'gif' => 'image/gif',
+      'bmp' => 'image/bmp'
+    }.freeze
     XML_NAMESPACES = {
       'w' => 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
       'a' => 'http://schemas.openxmlformats.org/drawingml/2006/main',
@@ -155,6 +165,20 @@ module Docx
     # Output entire document as a String HTML fragment
     def to_html
       paragraphs.map(&:to_html).join("\n")
+    end
+
+    # Substitute a placeholder across runs in every paragraph of the document,
+    # including paragraphs nested inside table cells. Delegates to
+    # Paragraph#substitute so placeholders split across multiple runs are matched.
+    #
+    #   match: String | Regexp
+    #   multiline: when true, "\n" in replacement becomes a soft line break (<w:br/>)
+    def substitute_across_runs(match, replacement, multiline: false)
+      @doc.xpath('//w:p', XML_NAMESPACES).each do |p_node|
+        Elements::Containers::Paragraph.new(p_node, document_properties, self)
+                                       .substitute(match, replacement, multiline: multiline)
+      end
+      self
     end
 
     # Save document to provided path
@@ -340,6 +364,59 @@ module Docx
       placements
     end
 
+    # Insert an image at a placeholder text in any paragraph (body or table cell).
+    #
+    # Options:
+    #   fit: :cover | :contain | :stretch (default: :contain)
+    #   width: width in cm
+    #   height: height in cm
+    #   cleanup_placeholder: true | false (default: true)
+    def insert_image_at_placeholder(placeholder, source, options = {})
+      insert_images_at_placeholder(placeholder, [source], options).first
+    end
+
+    # Insert multiple images at a placeholder text in the same paragraph.
+    #
+    # Returns an array of placement hashes:
+    #   [{ relationship_id: "rId2", entry_path: "word/media/image_generated_1.png", fit: :contain }, ...]
+    def insert_images_at_placeholder(placeholder, sources = [], options = {})
+      sources = Array(sources).compact
+      fit = normalize_fit_option(options.fetch(:fit, :contain))
+      cleanup_placeholder = options.fetch(:cleanup_placeholder, true)
+      width_cm = options[:width]
+      height_cm = options[:height]
+
+      paragraph = find_paragraph_by_placeholder(placeholder)
+
+      if sources.empty?
+        remove_placeholder_from_paragraph(paragraph, placeholder) if paragraph && cleanup_placeholder
+        return []
+      end
+
+      raise Errors::ImagePlaceholderNotFound, "Placeholder not found: #{placeholder}" if paragraph.nil?
+
+      anchor_run = find_run_with_placeholder(paragraph, placeholder)
+      last_inserted = anchor_run
+      placements = []
+
+      sources.each do |source|
+        image_bytes = read_replacement_source(source)
+        placement = insert_drawing_at_paragraph(
+          paragraph,
+          image_bytes,
+          fit: fit,
+          width_cm: width_cm,
+          height_cm: height_cm,
+          insert_after: last_inserted
+        )
+        last_inserted = placement.delete(:run_node)
+        placements << placement
+      end
+
+      remove_placeholder_from_paragraph(paragraph, placeholder) if cleanup_placeholder
+      placements
+    end
+
     def default_paragraph_style
       @styles.at_xpath("w:styles/w:style[@w:type='paragraph' and @w:default='1']/w:name/@w:val").value
     end
@@ -382,8 +459,7 @@ module Docx
     end
 
     def load_styles
-      @styles_xml = @zip.read('word/styles.xml')
-      @styles = Nokogiri::XML(@styles_xml)
+      @styles = Nokogiri::XML(@zip.read('word/styles.xml'))
       load_rels
     rescue Errno::ENOENT => e
       warn e.message
@@ -395,8 +471,17 @@ module Docx
       raise Errno::ENOENT unless rels_entry
 
       @rels_path = rels_entry.name
-      @rels_xml = rels_entry.get_input_stream.read
-      @rels = Nokogiri::XML(@rels_xml)
+      @rels = Nokogiri::XML(rels_entry.get_input_stream.read)
+      load_content_types
+    end
+
+    def load_content_types
+      entry = @zip.find_entry(CONTENT_TYPES_PATH)
+      return unless entry
+
+      @replace[CONTENT_TYPES_PATH] = entry.get_input_stream.read
+    rescue Errno::ENOENT
+      nil
     end
 
     #--
@@ -468,6 +553,31 @@ module Docx
         text = cell.xpath('.//w:t', XML_NAMESPACES).map(&:text).join
         text.include?(placeholder)
       end
+    end
+
+    def find_paragraph_by_placeholder(placeholder)
+      doc.xpath('//w:p', XML_NAMESPACES).find do |paragraph|
+        text = paragraph.xpath('.//w:t', XML_NAMESPACES).map(&:text).join
+        text.include?(placeholder)
+      end
+    end
+
+    def find_run_with_placeholder(paragraph, placeholder)
+      paragraph.xpath('./w:r', XML_NAMESPACES).find do |run|
+        text = run.xpath('.//w:t', XML_NAMESPACES).map(&:text).join
+        text.include?(placeholder)
+      end
+    end
+
+    def remove_placeholder_from_paragraph(paragraph, placeholder)
+      text_nodes = paragraph.xpath('.//w:t', XML_NAMESPACES)
+      return if text_nodes.empty?
+
+      merged_text = text_nodes.map(&:text).join
+      return unless merged_text.include?(placeholder)
+
+      text_nodes.first.content = merged_text.gsub(placeholder, '')
+      text_nodes.drop(1).each { |node| node.content = '' }
     end
 
     def table_cell_index_within_row(row_node, cell_node)
@@ -692,9 +802,140 @@ module Docx
 
       add_image_relationship(relationship_id, entry_path)
       replace_entry(entry_path, replacement_contents)
+      ensure_content_type_default(ext)
       embed_attr.value = relationship_id
 
       { relationship_id: relationship_id, entry_path: entry_path }
+    end
+
+    def ensure_content_type_default(ext)
+      xml = @replace[CONTENT_TYPES_PATH]
+      return unless xml
+
+      ext = ext.to_s.downcase
+      content_type = CONTENT_TYPE_MAPPINGS[ext]
+      return unless content_type
+
+      content_types = Nokogiri::XML(xml)
+      types_node = content_types.at_xpath('/xmlns:Types', 'xmlns' => CONTENT_TYPES_NS)
+      return unless types_node
+
+      existing = types_node.xpath("xmlns:Default[@Extension='#{ext}']", 'xmlns' => CONTENT_TYPES_NS)
+      return unless existing.empty?
+
+      default_node = Nokogiri::XML::Node.new('Default', content_types)
+      default_node['Extension'] = ext
+      default_node['ContentType'] = content_type
+      types_node.add_child(default_node)
+      @replace[CONTENT_TYPES_PATH] = content_types.serialize(save_with: 0)
+    end
+
+    def insert_drawing_at_paragraph(paragraph, image_bytes, fit:, width_cm:, height_cm:, insert_after:)
+      ext = extension_for_image_bytes(image_bytes)
+      entry_path = next_generated_media_path(ext)
+      relationship_id = next_relationship_id
+
+      add_image_relationship(relationship_id, entry_path)
+      replace_entry(entry_path, image_bytes)
+      ensure_content_type_default(ext)
+
+      cx, cy = initial_extent_emus(width_cm, height_cm, image_bytes)
+      docpr_id = next_docpr_id
+      name = "Image #{docpr_id}"
+      run_node = build_drawing_run_node(relationship_id, cx, cy, docpr_id, name)
+
+      if insert_after
+        insert_after.add_next_sibling(run_node)
+      else
+        paragraph.add_child(run_node)
+      end
+
+      drawing_node = run_node.at_xpath('./w:drawing', XML_NAMESPACES)
+      apply_image_size_to_drawing(drawing_node, width_cm, height_cm, image_bytes) if width_cm || height_cm
+      apply_image_fit_to_drawing(drawing_node, fit, image_bytes) if fit != :stretch && width_cm && height_cm
+
+      {
+        relationship_id: relationship_id,
+        entry_path: entry_path,
+        fit: fit,
+        run_node: run_node
+      }
+    end
+
+    def initial_extent_emus(width_cm, height_cm, image_bytes)
+      if width_cm || height_cm
+        source_width, source_height = image_size_from_bytes(image_bytes)
+        source_ratio = source_width.to_f / source_height
+
+        if width_cm && height_cm
+          [(width_cm * CM_TO_EMU).round, (height_cm * CM_TO_EMU).round]
+        elsif width_cm
+          cx = (width_cm * CM_TO_EMU).round
+          [cx, (cx / source_ratio).round]
+        else
+          cy = (height_cm * CM_TO_EMU).round
+          [(cy * source_ratio).round, cy]
+        end
+      else
+        compute_default_image_emus(image_bytes)
+      end
+    end
+
+    def compute_default_image_emus(image_bytes)
+      source_width, source_height = image_size_from_bytes(image_bytes)
+      cx = (source_width / 96.0 * 914_400).round
+      cy = (source_height / 96.0 * 914_400).round
+
+      if cx > MAX_IMAGE_WIDTH_EMU
+        ratio = MAX_IMAGE_WIDTH_EMU.to_f / cx
+        cx = MAX_IMAGE_WIDTH_EMU
+        cy = (cy * ratio).round
+      end
+
+      [cx, cy]
+    end
+
+    def next_docpr_id
+      max_id = doc.xpath('//wp:docPr/@id', XML_NAMESPACES).map { |attr| attr.value.to_i }.max || 0
+      max_id + 1
+    end
+
+    def build_drawing_run_node(rid, cx, cy, docpr_id, name)
+      xml = <<~XML
+        <w:r xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+          <w:drawing>
+            <wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0">
+              <wp:extent cx="#{cx}" cy="#{cy}"/>
+              <wp:effectExtent l="0" t="0" r="0" b="0"/>
+              <wp:docPr id="#{docpr_id}" name="#{name}"/>
+              <wp:cNvGraphicFramePr>
+                <a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/>
+              </wp:cNvGraphicFramePr>
+              <a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+                <a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">
+                  <pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">
+                    <pic:nvPicPr>
+                      <pic:cNvPr id="#{docpr_id}" name="#{name}"/>
+                      <pic:cNvPicPr/>
+                    </pic:nvPicPr>
+                    <pic:blipFill>
+                      <a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="#{rid}"/>
+                      <a:stretch><a:fillRect/></a:stretch>
+                    </pic:blipFill>
+                    <pic:spPr>
+                      <a:xfrm><a:off x="0" y="0"/><a:ext cx="#{cx}" cy="#{cy}"/></a:xfrm>
+                      <a:prstGeom prst="rect"><a:avLst/></a:prstGeom>
+                    </pic:spPr>
+                  </pic:pic>
+                </a:graphicData>
+              </a:graphic>
+            </wp:inline>
+          </w:drawing>
+        </w:r>
+      XML
+
+      fragment = Nokogiri::XML::DocumentFragment.parse(xml)
+      fragment.at_xpath('./w:r', XML_NAMESPACES)
     end
 
     def extension_for_image_bytes(bytes)
