@@ -16,8 +16,8 @@ describe Docx::Merge::NodeRewriter do
     Nokogiri::XML(xml).root
   end
 
-  def rewriter(style_id_map: {}, num_id_map: {})
-    described_class.new(style_id_map: style_id_map, num_id_map: num_id_map)
+  def rewriter(style_id_map: {}, num_id_map: {}, rid_map: {})
+    described_class.new(style_id_map: style_id_map, num_id_map: num_id_map, rid_map: rid_map)
   end
 
   describe '#rewrite' do
@@ -166,6 +166,72 @@ describe Docx::Merge::NodeRewriter do
       rewriter(num_id_map: { '42' => '7' }).rewrite(node)
 
       expect(node.at_xpath('./w:numId', xml_ns)['w:val']).to eq('7')
+    end
+
+    it 'rewrites r:embed relationship references' do
+      r_ns = xml_ns['r']
+      a_ns = xml_ns['a']
+      node = frag(<<~XML)
+        <a:blip xmlns:a="#{a_ns}" xmlns:r="#{r_ns}" r:embed="rId5"/>
+      XML
+
+      rewriter(rid_map: { 'rId5' => 'rId9' }).rewrite(node)
+
+      expect(node['r:embed']).to eq('rId9')
+    end
+
+    it 'rewrites w:hyperlink r:id relationship references' do
+      r_ns = xml_ns['r']
+      node = frag(<<~XML)
+        <w:hyperlink xmlns:w="#{w_ns}" xmlns:r="#{r_ns}" r:id="rId3">
+          <w:r>
+            <w:t>link</w:t>
+          </w:r>
+        </w:hyperlink>
+      XML
+
+      rewriter(rid_map: { 'rId3' => 'rId10' }).rewrite(node)
+
+      expect(node['r:id']).to eq('rId10')
+    end
+
+    it 'rewrites r:link relationship references' do
+      r_ns = xml_ns['r']
+      a_ns = xml_ns['a']
+      node = frag(<<~XML)
+        <a:blip xmlns:a="#{a_ns}" xmlns:r="#{r_ns}" r:link="rId4"/>
+      XML
+
+      rewriter(rid_map: { 'rId4' => 'rId8' }).rewrite(node)
+
+      expect(node['r:link']).to eq('rId8')
+    end
+
+    it 'leaves unmapped relationship references unchanged' do
+      r_ns = xml_ns['r']
+      a_ns = xml_ns['a']
+      node = frag(<<~XML)
+        <a:blip xmlns:a="#{a_ns}" xmlns:r="#{r_ns}" r:embed="rId5" r:link="rId6"/>
+      XML
+
+      rewriter(rid_map: { 'rId9' => 'rId10' }).rewrite(node)
+
+      expect(node['r:embed']).to eq('rId5')
+      expect(node['r:link']).to eq('rId6')
+    end
+
+    it 'preserves r namespace prefixes without duplicate xmlns in serialized output' do
+      r_ns = xml_ns['r']
+      a_ns = xml_ns['a']
+      node = frag(<<~XML)
+        <a:blip xmlns:a="#{a_ns}" xmlns:r="#{r_ns}" r:embed="rId5"/>
+      XML
+
+      rewriter(rid_map: { 'rId5' => 'rId9' }).rewrite(node)
+      serialized = node.to_xml
+
+      expect(serialized).to include('r:embed="rId9"')
+      expect(serialized.scan('xmlns:r=').length).to eq(1)
     end
   end
 end
