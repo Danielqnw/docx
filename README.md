@@ -21,6 +21,7 @@ It lets you work with a document's content (paragraphs, bookmarks, tables, image
 | 🔗 Cell merging | Merge / unmerge rectangular regions on a logical grid, with safe `gridSpan` / `vMerge` handling |
 | 🖼️ Image replacement | Replace by relationship id, archive path, or placeholder text, including batch replacement in table cells |
 | ✏️ Text substitution | Replace text while preserving formatting, with optional regex captures |
+| 🧩 Template filling | Cross-run substitution, insert images at text-only placeholders, checkboxes, multiline breaks, and a high-level `render` entry |
 | 🎨 Styles | Add, modify, and remove paragraph / character styles |
 | 🔧 Low-level access | Reach the underlying `Nokogiri` nodes when you need finer control |
 
@@ -38,6 +39,12 @@ It lets you work with a document's content (paragraphs, bookmarks, tables, image
   - [Writing to tables](#writing-to-tables)
   - [Merging and unmerging cells](#merging-and-unmerging-cells)
 - [Images](#images)
+- [Template filling](#template-filling)
+  - [Cross-run text substitution](#cross-run-text-substitution)
+  - [Inserting images at placeholders](#inserting-images-at-placeholders)
+  - [Checkboxes](#checkboxes)
+  - [High-level render](#high-level-render)
+  - [Cleaning up placeholders](#cleaning-up-placeholders)
 - [Writing and substituting text](#writing-and-substituting-text)
 - [Styles](#styles)
   - [Style attributes](#style-attributes)
@@ -344,6 +351,94 @@ Image-related errors:
 | --- | --- |
 | `Docx::Errors::ImageNotFound` | No image matches the given relationship id / archive path |
 | `Docx::Errors::ImagePlaceholderNotFound` | The placeholder text was not found in any table cell |
+
+## Template filling
+
+These APIs are designed for filling a `.docx` template with runtime data. They are fully generic: keys are placeholder names, and no host/business semantics are assumed.
+
+### Cross-run text substitution
+
+Word often splits a single placeholder such as `{{name}}` across several adjacent runs (`w:r`/`w:t`) because of spell-check or formatting remnants. The run-level `TextRun#substitute` cannot match those, but the paragraph- and document-level helpers can — while preserving the formatting of the first matched run.
+
+```ruby
+doc = Docx::Document.open('template.docx')
+
+# Paragraph-level (matches across runs within the paragraph)
+doc.paragraphs.first.substitute('{{title}}', 'Quarterly Report')
+
+# Whole document, including paragraphs inside table cells
+doc.substitute_across_runs('{{name}}', 'Alice')
+
+# Regexp with capture groups is supported
+doc.substitute_across_runs(/\{\{amount:(\d+)\}\}/, 'USD \1')
+
+# Multiline: "\n" becomes a soft line break (<w:br/>) instead of collapsing onto one line
+doc.substitute_across_runs('{{bio}}', "Line one\nLine two", multiline: true)
+
+doc.save('filled.docx')
+```
+
+### Inserting images at placeholders
+
+Unlike `replace_image_by_placeholder_in_table`, which requires a pre-existing image in the cell, these methods create a new image from scratch at a plain text placeholder — in ordinary paragraphs **or** table cells. They register the media file, the relationship, and the `[Content_Types].xml` default automatically.
+
+```ruby
+# Insert one image where the "{{photo}}" placeholder is (path, IO, or StringIO)
+doc.insert_image_at_placeholder('{{photo}}', 'avatar.png', fit: :contain, width: 3, height: 3)
+
+# Insert several images at one placeholder
+doc.insert_images_at_placeholder('{{gallery}}', ['a.png', 'b.png', 'c.png'])
+
+# Replace an existing image located by placeholder in a paragraph (not just a table cell)
+doc.replace_image_by_placeholder('{{logo}}', 'new-logo.png', fit: :cover)
+```
+
+`source` accepts a file path, an `IO`/`StringIO`, and PNG/JPEG are supported. When `width`/`height` (cm) are omitted, a sensible size is inferred from the image pixels at 96 DPI (capped to roughly the page content width).
+
+### Checkboxes
+
+```ruby
+# Character-glyph checkbox: flips ☐ (U+2610) to ☑ (U+2611) in the paragraph containing the locator
+doc.set_checkbox('Option A', checked: true)
+
+# Custom markers, e.g. "[ ]" -> "[x]"
+doc.set_checkbox('Accept terms', checked: true, unchecked_glyph: '[ ]', checked_glyph: '[x]')
+
+# Word content-control checkbox (w:sdt + w14:checkbox), matched by tag or alias
+doc.check_content_control('opt_a', checked: true)
+```
+
+### High-level render
+
+`render` orchestrates the operations above in one data-driven call. Value types decide the handling.
+
+```ruby
+doc.render(
+  text:             { '{{name}}' => 'Alice', '{{bio}}' => "line 1\nline 2" },
+  images:           { '{{photo}}' => 'avatar.png', '{{gallery}}' => ['a.png', 'b.png'] },
+  checkboxes:       { 'Option A' => true },
+  content_controls: { 'opt_a' => true },
+  tables:           [{ placeholder_row: '{{row}}',
+                       rows: [ { '{{city}}' => 'Paris', '{{country}}' => 'France' },
+                               { '{{city}}' => 'Tokyo', '{{country}}' => 'Japan' } ] }],
+  multiline:      true,   # \n in text becomes <w:br/>
+  strip_unfilled: true,   # clear any placeholders left unfilled
+  strict:         false,  # when false, missing placeholders are skipped instead of raising
+  image_options:  { fit: :contain }
+)
+
+doc.save('report.docx')
+```
+
+For `tables`, the row containing `placeholder_row` is used as a template: it is cloned once per data hash (each key substituted across runs) and the original template row is removed.
+
+### Cleaning up placeholders
+
+```ruby
+# Clear any leftover, unfilled placeholders (cross-run aware; does not touch filled content)
+doc.strip_unfilled_placeholders                       # default pattern /\{\{.*?\}\}/
+doc.strip_unfilled_placeholders(pattern: /%[A-Z_]+%/) # custom pattern
+```
 
 ## Writing and substituting text
 

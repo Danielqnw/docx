@@ -21,6 +21,7 @@
 | 🔗 单元格合并 | 在逻辑网格上合并 / 拆分矩形区域，并安全处理 `gridSpan` / `vMerge` |
 | 🖼️ 图片替换 | 按关系 ID、压缩包内路径或占位符文本替换图片，支持表格内批量替换 |
 | ✏️ 文本替换 | 保留原有格式替换文本，并可使用正则捕获组 |
+| 🧩 模板填充 | 跨 run 替换、向纯文本占位符插图、勾选框、换行，以及高层 `render` 入口 |
 | 🎨 样式管理 | 新增、修改、删除段落 / 字符样式 |
 | 🔧 底层访问 | 需要更精细控制时，可直接访问底层的 `Nokogiri` 节点 |
 
@@ -38,6 +39,7 @@
   - [写入表格](#写入表格)
   - [合并与拆分单元格](#合并与拆分单元格)
 - [图片](#图片)
+- [模板填充](#模板填充)
 - [写入与替换文本](#写入与替换文本)
 - [样式](#样式)
   - [样式属性](#样式属性)
@@ -344,6 +346,94 @@ doc.save('with-images-edited.docx')
 | --- | --- |
 | `Docx::Errors::ImageNotFound` | 没有图片匹配给定的关系 ID / 压缩包内路径 |
 | `Docx::Errors::ImagePlaceholderNotFound` | 在任何表格单元格中都未找到该占位符文本 |
+
+## 模板填充
+
+下面这组 API 面向「用运行时数据填充 `.docx` 模板」的场景，完全通用：键即占位符名，不假设任何业务语义。
+
+### 跨 run 文本替换
+
+Word 常把一个占位符（如 `{{name}}`）因拼写检查 / 格式痕迹拆分到多个相邻 run（`w:r`/`w:t`）。run 级的 `TextRun#substitute` 无法匹配到，而段落级 / 文档级的方法可以——并保留命中区域**第一个 run 的格式**。
+
+```ruby
+doc = Docx::Document.open('template.docx')
+
+# 段落级（在段落内跨 run 匹配）
+doc.paragraphs.first.substitute('{{title}}', '季度报告')
+
+# 全文替换，包含表格单元格内的段落
+doc.substitute_across_runs('{{name}}', 'Alice')
+
+# 支持带捕获组的正则
+doc.substitute_across_runs(/\{\{amount:(\d+)\}\}/, 'USD \1')
+
+# 多行：multiline 为 true 时 "\n" 生成软换行 <w:br/>，而不会挤成一行
+doc.substitute_across_runs('{{bio}}', "第一行\n第二行", multiline: true)
+
+doc.save('filled.docx')
+```
+
+### 向占位符位置插入图片
+
+与要求单元格内**已有**图片的 `replace_image_by_placeholder_in_table` 不同，这些方法可以在纯文本占位符处（普通段落**或**表格单元格）从零创建图片，并自动注册 media 文件、关系与 `[Content_Types].xml` 默认项。
+
+```ruby
+# 在 "{{photo}}" 占位符处插入一张图片（路径 / IO / StringIO 均可）
+doc.insert_image_at_placeholder('{{photo}}', 'avatar.png', fit: :contain, width: 3, height: 3)
+
+# 在一个占位符处插入多张
+doc.insert_images_at_placeholder('{{gallery}}', ['a.png', 'b.png', 'c.png'])
+
+# 在段落（不限于表格单元格）中按占位符替换已有图片
+doc.replace_image_by_placeholder('{{logo}}', 'new-logo.png', fit: :cover)
+```
+
+`source` 支持文件路径、`IO`/`StringIO`，支持 PNG/JPEG。未给 `width`/`height`（cm）时，按图片像素以 96 DPI 推断合理尺寸（并限制在页面内容宽度左右）。
+
+### 勾选框
+
+```ruby
+# 字符型勾选框：把 locator 所在段落里的 ☐（U+2610）切换为 ☑（U+2611）
+doc.set_checkbox('选项A', checked: true)
+
+# 自定义标记，例如 "[ ]" -> "[x]"
+doc.set_checkbox('同意条款', checked: true, unchecked_glyph: '[ ]', checked_glyph: '[x]')
+
+# Word 内容控件勾选框（w:sdt + w14:checkbox），按 tag 或 alias 匹配
+doc.check_content_control('opt_a', checked: true)
+```
+
+### 高层 render 入口
+
+`render` 用一次数据驱动的调用编排上述所有操作，值的类型决定处理方式。
+
+```ruby
+doc.render(
+  text:             { '{{name}}' => 'Alice', '{{bio}}' => "第一行\n第二行" },
+  images:           { '{{photo}}' => 'avatar.png', '{{gallery}}' => ['a.png', 'b.png'] },
+  checkboxes:       { '选项A' => true },
+  content_controls: { 'opt_a' => true },
+  tables:           [{ placeholder_row: '{{row}}',
+                       rows: [ { '{{city}}' => 'Paris', '{{country}}' => 'France' },
+                               { '{{city}}' => 'Tokyo', '{{country}}' => 'Japan' } ] }],
+  multiline:      true,   # 文本中的 \n 转为 <w:br/>
+  strip_unfilled: true,   # 清除未赋值的占位符
+  strict:         false,  # 为 false 时，找不到的占位符会被跳过而非报错
+  image_options:  { fit: :contain }
+)
+
+doc.save('report.docx')
+```
+
+`tables` 中，含 `placeholder_row` 的行作为模板行：每条数据 hash 克隆一次（各键跨 run 替换），并在最后移除原模板行。
+
+### 清理占位符
+
+```ruby
+# 清空遗留、未赋值的占位符（跨 run 安全，不影响已赋值内容）
+doc.strip_unfilled_placeholders                       # 默认 pattern /\{\{.*?\}\}/
+doc.strip_unfilled_placeholders(pattern: /%[A-Z_]+%/) # 自定义 pattern
+```
 
 ## 写入与替换文本
 
