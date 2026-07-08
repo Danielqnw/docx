@@ -181,6 +181,49 @@ module Docx
       self
     end
 
+    # Remove unfilled placeholder text matching +pattern+ from every paragraph,
+    # including paragraphs inside table cells. Uses Paragraph#substitute for
+    # cross-run safety. Idempotent; returns self.
+    def strip_unfilled_placeholders(pattern: /\{\{.*?\}\}/)
+      @doc.xpath('//w:p', XML_NAMESPACES).each do |p_node|
+        Elements::Containers::Paragraph.new(p_node, document_properties, self)
+                                       .substitute(pattern, '')
+      end
+      self
+    end
+
+    # High-level template render entry. Keys are placeholder names; value types
+    # determine handling. Returns self for chaining.
+    #
+    # Processing order: text → tables → images → checkboxes → content_controls
+    # → strip_unfilled (when enabled).
+    def render(text: {}, images: {}, checkboxes: {}, content_controls: {}, tables: [],
+               multiline: true, strip_unfilled: false, strict: false, image_options: {})
+      text.each do |placeholder, value|
+        substitute_across_runs(placeholder, value.to_s, multiline: multiline)
+      end
+
+      tables.each do |table_spec|
+        render_table_rows(table_spec, multiline: multiline, strict: strict)
+      end
+
+      images.each do |placeholder, source|
+        render_image(placeholder, source, image_options: image_options, strict: strict)
+      end
+
+      checkboxes.each do |locator, checked|
+        with_strict_rescue(strict) { set_checkbox(locator, checked: checked) }
+      end
+
+      content_controls.each do |tag_or_alias, checked|
+        with_strict_rescue(strict) { check_content_control(tag_or_alias, checked: checked) }
+      end
+
+      strip_unfilled_placeholders if strip_unfilled
+
+      self
+    end
+
     # Save document to provided path
     # call-seq:
     #   save(filepath) => void
@@ -478,6 +521,92 @@ module Docx
     end
 
     private
+
+    def with_strict_rescue(strict)
+      yield
+    rescue Errors::ImagePlaceholderNotFound
+      raise if strict
+    end
+
+    def render_table_rows(table_spec, multiline:, strict:)
+      placeholder_row = table_spec[:placeholder_row] || table_spec['placeholder_row']
+      rows = table_spec[:rows] || table_spec['rows']
+      return if rows.nil? || rows.empty?
+
+      template_tr = @doc.xpath('//w:tr', XML_NAMESPACES).find do |tr|
+        tr.xpath('.//w:t', XML_NAMESPACES).map(&:text).join.include?(placeholder_row)
+      end
+
+      if template_tr.nil?
+        raise Errors::ImagePlaceholderNotFound, "Template row not found: #{placeholder_row}" if strict
+
+        return
+      end
+
+      last_inserted = template_tr
+      rows.each do |row_data|
+        cloned = template_tr.dup(1)
+        cloned.xpath('.//w:p', XML_NAMESPACES).each do |p_node|
+          paragraph = Elements::Containers::Paragraph.new(p_node, document_properties, self)
+          row_data.each do |ph, val|
+            paragraph.substitute(ph, val.to_s, multiline: multiline)
+          end
+          paragraph.substitute(placeholder_row, '', multiline: false)
+        end
+        last_inserted.add_next_sibling(cloned)
+        last_inserted = cloned
+      end
+
+      template_tr.remove
+    end
+
+    def render_image(placeholder, source, image_options:, strict:)
+      with_strict_rescue(strict) do
+        if source.is_a?(Array)
+          render_image_array(placeholder, source, image_options)
+        else
+          render_single_image(placeholder, source, image_options)
+        end
+      end
+    end
+
+    def render_single_image(placeholder, source, image_options)
+      if placeholder_host_has_image?(placeholder)
+        replace_image_by_placeholder(placeholder, source, image_options)
+      else
+        insert_image_at_placeholder(placeholder, source, image_options)
+      end
+    end
+
+    def render_image_array(placeholder, sources, image_options)
+      sources = Array(sources).compact
+      return if sources.empty?
+
+      if placeholder_host_has_image?(placeholder)
+        host = placeholder_image_host(placeholder)
+        if host&.name == 'tc'
+          replace_images_by_placeholder_in_table(placeholder, sources, image_options)
+        else
+          replace_image_by_placeholder(placeholder, sources.first, image_options)
+        end
+      else
+        insert_images_at_placeholder(placeholder, sources, image_options)
+      end
+    end
+
+    def placeholder_image_host(placeholder)
+      paragraph = find_paragraph_by_placeholder(placeholder)
+      return nil if paragraph.nil?
+
+      paragraph.at_xpath('./ancestor::w:tc[1]', XML_NAMESPACES) || paragraph
+    end
+
+    def placeholder_host_has_image?(placeholder)
+      host = placeholder_image_host(placeholder)
+      return false if host.nil?
+
+      !host.at_xpath('.//a:blip', XML_NAMESPACES).nil?
+    end
 
     def extract_documents
       DOCUMENT_PATHS.each do |attr_name, path|
