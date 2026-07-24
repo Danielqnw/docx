@@ -1,0 +1,396 @@
+# frozen_string_literal: true
+
+require 'spec_helper'
+require 'docx'
+require 'securerandom'
+require 'tmpdir'
+require 'zip'
+require 'stringio'
+
+describe Docx::Merge::NumberingImporter do
+  ns = Docx::Document::XML_NAMESPACES
+
+  def xml_ns
+    Docx::Document::XML_NAMESPACES
+  end
+
+  def build_doc_with_numbering(numbering_xml)
+    base = File.join('spec/fixtures', 'basic.docx')
+    buffer = Zip::OutputStream.write_buffer do |out|
+      has_numbering = false
+      Zip::File.open(base) do |zf|
+        zf.each do |entry|
+          next unless entry.file?
+
+          if entry.name == 'word/numbering.xml'
+            has_numbering = true
+            out.put_next_entry(entry.name)
+            out.write(numbering_xml)
+          else
+            out.put_next_entry(entry.name)
+            out.write(zf.read(entry.name))
+          end
+        end
+      end
+      unless has_numbering
+        out.put_next_entry('word/numbering.xml')
+        out.write(numbering_xml)
+      end
+    end
+    Docx::Document.open(StringIO.new(buffer.string))
+  end
+
+  def build_doc_without_numbering
+    Docx::Document.open(File.join('spec/fixtures', 'basic.docx'))
+  end
+
+  def save_to_tempfile(doc)
+    path = File.join(Dir.tmpdir, "docx_merge_#{SecureRandom.hex(8)}.docx")
+    doc.save(path)
+    path
+  end
+
+  def wrap_numbering(*children)
+    w_ns = Docx::Document::XML_NAMESPACES['w']
+    <<~XML
+      <?xml version="1.0"?>
+      <w:numbering xmlns:w="#{w_ns}">
+        #{children.join("\n")}
+      </w:numbering>
+    XML
+  end
+
+  def abstract_num(abs_id, num_style_link: nil, lvl_text: '•', lvl_p_style: nil)
+    style_link_xml = if num_style_link
+                       %(        <w:numStyleLink w:val="#{num_style_link}"/>)
+                     else
+                       ''
+                     end
+    p_style_xml = if lvl_p_style
+                    %(          <w:pStyle w:val="#{lvl_p_style}"/>)
+                  else
+                    ''
+                  end
+    <<~XML
+      <w:abstractNum w:abstractNumId="#{abs_id}">
+      #{style_link_xml}
+        <w:lvl w:ilvl="0">
+          <w:start w:val="1"/>
+          <w:numFmt w:val="bullet"/>
+          <w:lvlText w:val="#{lvl_text}"/>
+      #{p_style_xml}
+        </w:lvl>
+      </w:abstractNum>
+    XML
+  end
+
+  def num(num_id, abstract_num_id)
+    <<~XML
+      <w:num w:numId="#{num_id}">
+        <w:abstractNumId w:val="#{abstract_num_id}"/>
+      </w:num>
+    XML
+  end
+
+  def abstract_num_nodes(doc)
+    doc.numbering.xpath('//w:numbering/w:abstractNum', xml_ns)
+  end
+
+  def num_nodes(doc)
+    doc.numbering.xpath('//w:numbering/w:num', xml_ns)
+  end
+
+  def abstract_num_node(doc, abs_id)
+    doc.numbering.at_xpath("//w:abstractNum[@w:abstractNumId='#{abs_id}']", xml_ns)
+  end
+
+  def num_node(doc, num_id)
+    doc.numbering.at_xpath("//w:num[@w:numId='#{num_id}']", xml_ns)
+  end
+
+  def doc_defaults_xml
+    <<~XML
+      <w:docDefaults>
+        <w:rPrDefault>
+          <w:rPr>
+            <w:rFonts w:ascii="Times New Roman" w:eastAsia="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+          </w:rPr>
+        </w:rPrDefault>
+        <w:pPrDefault/>
+      </w:docDefaults>
+    XML
+  end
+
+  def paragraph_style(style_id, spacing_after: '120')
+    <<~XML
+      <w:style w:type="paragraph" w:styleId="#{style_id}">
+        <w:name w:val="#{style_id}"/>
+        <w:pPr><w:spacing w:after="#{spacing_after}"/></w:pPr>
+      </w:style>
+    XML
+  end
+
+  def wrap_styles(*children)
+    <<~XML
+      <?xml version="1.0"?>
+      <w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+        #{doc_defaults_xml}
+        #{children.join("\n")}
+      </w:styles>
+    XML
+  end
+
+  def build_doc_with_styles_and_numbering(styles_xml, numbering_xml)
+    base = File.join('spec/fixtures', 'basic.docx')
+    buffer = Zip::OutputStream.write_buffer do |out|
+      has_numbering = false
+      Zip::File.open(base) do |zf|
+        zf.each do |entry|
+          next unless entry.file?
+
+          content = case entry.name
+                    when 'word/styles.xml' then styles_xml
+                    when 'word/numbering.xml'
+                      has_numbering = true
+                      numbering_xml
+                    else
+                      zf.read(entry.name)
+                    end
+          out.put_next_entry(entry.name)
+          out.write(content)
+        end
+      end
+      unless has_numbering
+        out.put_next_entry('word/numbering.xml')
+        out.write(numbering_xml)
+      end
+    end
+    Docx::Document.open(StringIO.new(buffer.string))
+  end
+
+  def style_node(doc, style_id)
+    doc.styles.at_xpath("//w:style[@w:styleId='#{style_id}']", xml_ns)
+  end
+
+  def style_nodes(doc)
+    doc.styles.xpath('//w:styles/w:style', xml_ns)
+  end
+
+  describe '#import' do
+    it 'creates numbering on target and imports with offset ids when target has none' do
+      target = build_doc_without_numbering
+      source = build_doc_with_numbering(wrap_numbering(abstract_num(0), num(1, 0)))
+
+      importer = described_class.new(target, source)
+      mapped_id = importer.import('1')
+
+      expect(target.numbering).not_to be_nil
+      expect(mapped_id).to eq('1')
+      expect(importer.abstract_num_id_map).to eq('0' => '0')
+      expect(importer.num_id_map).to eq('1' => '1')
+      expect(abstract_num_node(target, '0')).not_to be_nil
+      imported_num = num_node(target, '1')
+      expect(imported_num).not_to be_nil
+      expect(imported_num.at_xpath('./w:abstractNumId/@w:val', ns).value).to eq('0')
+    end
+
+    it 'offsets imported ids to avoid conflicts with existing target numbering' do
+      target = build_doc_with_numbering(wrap_numbering(abstract_num(0, lvl_text: 'T'), num(1, 0)))
+      source = build_doc_with_numbering(wrap_numbering(abstract_num(0, lvl_text: 'S'), num(1, 0)))
+      target_abs_xml = abstract_num_node(target, '0').to_xml
+      target_num_xml = num_node(target, '1').to_xml
+
+      importer = described_class.new(target, source)
+      mapped_id = importer.import('1')
+
+      expect(mapped_id).to eq('2')
+      expect(importer.abstract_num_id_map).to eq('0' => '1')
+      expect(importer.num_id_map).to eq('1' => '2')
+      expect(abstract_num_node(target, '0').to_xml).to eq(target_abs_xml)
+      expect(num_node(target, '1').to_xml).to eq(target_num_xml)
+      expect(abstract_num_node(target, '1').at_xpath('.//w:lvlText/@w:val', ns).value).to eq('S')
+      expect(num_node(target, '2').at_xpath('./w:abstractNumId/@w:val', ns).value).to eq('1')
+    end
+
+    it 'rewrites numStyleLink values using style_id_map' do
+      target = build_doc_without_numbering
+      source = build_doc_with_numbering(
+        wrap_numbering(abstract_num(0, num_style_link: 'SrcStyle'), num(1, 0))
+      )
+      style_map = { 'SrcStyle' => 'm1_SrcStyle' }
+
+      importer = described_class.new(target, source, style_id_map: style_map)
+      importer.import('1')
+
+      imported_abs = abstract_num_node(target, '0')
+      expect(imported_abs.at_xpath('./w:numStyleLink/@w:val', ns).value).to eq('m1_SrcStyle')
+    end
+
+    it 'does not import styles when only style_id_map is provided' do
+      src_list_style = paragraph_style('SrcList')
+      target = build_doc_with_styles_and_numbering(wrap_styles, wrap_numbering(num(1, 0)))
+      source = build_doc_with_styles_and_numbering(
+        wrap_styles(src_list_style),
+        wrap_numbering(abstract_num(0, num_style_link: 'SrcList'), num(1, 0))
+      )
+      initial_style_count = style_nodes(target).size
+      style_map = { 'SrcList' => 'MappedList' }
+
+      importer = described_class.new(target, source, style_id_map: style_map)
+      importer.import('1')
+
+      imported_abs = abstract_num_node(target, '0')
+      expect(imported_abs.at_xpath('./w:numStyleLink/@w:val', ns).value).to eq('MappedList')
+      expect(style_nodes(target).size).to eq(initial_style_count)
+      expect(style_node(target, 'MappedList')).to be_nil
+      expect(style_node(target, 'SrcList')).to be_nil
+    end
+
+    it 'imports shared abstractNum only once when multiple nums reference it' do
+      target = build_doc_without_numbering
+      source = build_doc_with_numbering(
+        wrap_numbering(abstract_num(0), num(1, 0), num(2, 0))
+      )
+      initial_abs_count = abstract_num_nodes(source).size
+
+      importer = described_class.new(target, source)
+      importer.import('1')
+      importer.import('2')
+
+      expect(initial_abs_count).to eq(1)
+      expect(abstract_num_nodes(target).size).to eq(1)
+      expect(num_nodes(target).size).to eq(2)
+      expect(importer.abstract_num_id_map).to eq('0' => '0')
+      expect(importer.num_id_map).to eq('1' => '1', '2' => '2')
+      expect(num_node(target, '1').at_xpath('./w:abstractNumId/@w:val', ns).value).to eq('0')
+      expect(num_node(target, '2').at_xpath('./w:abstractNumId/@w:val', ns).value).to eq('0')
+    end
+
+    it 'keeps all abstractNum elements before num elements after import' do
+      target = build_doc_without_numbering
+      source = build_doc_with_numbering(
+        wrap_numbering(abstract_num(0), abstract_num(1), num(1, 0), num(2, 1))
+      )
+
+      importer = described_class.new(target, source)
+      importer.import_all
+
+      children = target.numbering.at_xpath('//w:numbering', ns).children.select(&:element?)
+      last_abs_index = children.rindex { |node| node.name == 'abstractNum' }
+      first_num_index = children.index { |node| node.name == 'num' }
+      expect(last_abs_index).to be < first_num_index
+    end
+
+    it 'returns the original id when source numbering is missing' do
+      target = build_doc_without_numbering
+      source = build_doc_without_numbering
+
+      importer = described_class.new(target, source)
+      mapped_id = importer.import('1')
+
+      expect(mapped_id).to eq('1')
+      expect(target.numbering).to be_nil
+      expect(importer.num_id_map).to be_empty
+      expect(importer.abstract_num_id_map).to be_empty
+    end
+
+    it 'returns the original id when source numId is missing' do
+      target = build_doc_without_numbering
+      source = build_doc_with_numbering(wrap_numbering(abstract_num(0), num(1, 0)))
+
+      importer = described_class.new(target, source)
+      mapped_id = importer.import('99')
+
+      expect(mapped_id).to eq('99')
+      expect(importer.num_id_map).to eq('99' => '99')
+      expect(num_nodes(target)).to be_empty
+    end
+
+    it 'serializes imported numbering with w: namespace prefixes' do
+      target = build_doc_without_numbering
+      source = build_doc_with_numbering(wrap_numbering(abstract_num(0), num(1, 0)))
+
+      importer = described_class.new(target, source)
+      importer.import('1')
+
+      serialized = target.numbering.serialize(save_with: 0)
+      expect(serialized).to include('w:abstractNum')
+      expect(serialized).to include('w:num')
+      expect(serialized.scan('xmlns:w=').size).to eq(1)
+    end
+
+    it 'persists imported numbering after save and reopen' do
+      target = build_doc_without_numbering
+      source = build_doc_with_numbering(wrap_numbering(abstract_num(0), num(1, 0)))
+
+      importer = described_class.new(target, source)
+      importer.import('1')
+
+      temp_path = save_to_tempfile(target)
+      reopened = Docx::Document.open(temp_path)
+      expect(num_node(reopened, '1')).not_to be_nil
+      expect(abstract_num_node(reopened, '0')).not_to be_nil
+    ensure
+      File.delete(temp_path) if defined?(temp_path) && temp_path && File.exist?(temp_path)
+    end
+  end
+
+  describe 'numbering-to-style closure' do
+    it 'imports styles referenced by numStyleLink and rewrites the link' do
+      src_list_style = paragraph_style('SrcList')
+      target = build_doc_with_styles_and_numbering(wrap_styles, wrap_numbering(num(1, 0)))
+      source = build_doc_with_styles_and_numbering(
+        wrap_styles(src_list_style),
+        wrap_numbering(abstract_num(0, num_style_link: 'SrcList'), num(1, 0))
+      )
+      styles_importer = Docx::Merge::StylesImporter.new(target, source)
+
+      importer = described_class.new(target, source, styles_importer: styles_importer)
+      importer.import('1')
+
+      imported_abs = abstract_num_node(target, '0')
+      expect(style_node(target, 'SrcList')).not_to be_nil
+      expect(imported_abs.at_xpath('./w:numStyleLink/@w:val', ns).value).to eq('SrcList')
+      expect(styles_importer.style_id_map).to eq('SrcList' => 'SrcList')
+    end
+
+    it 'imports lvl pStyle with conflict rename and rewrites the reference' do
+      target_list_para = paragraph_style('ListPara', spacing_after: '100')
+      source_list_para = paragraph_style('ListPara', spacing_after: '200')
+      target = build_doc_with_styles_and_numbering(
+        wrap_styles(target_list_para),
+        wrap_numbering(num(1, 0))
+      )
+      source = build_doc_with_styles_and_numbering(
+        wrap_styles(source_list_para),
+        wrap_numbering(abstract_num(0, lvl_p_style: 'ListPara'), num(1, 0))
+      )
+      styles_importer = Docx::Merge::StylesImporter.new(target, source)
+
+      importer = described_class.new(target, source, styles_importer: styles_importer)
+      importer.import('1')
+
+      imported_abs = abstract_num_node(target, '0')
+      expect(style_node(target, 'ListPara').at_xpath('.//w:spacing/@w:after', ns).value).to eq('100')
+      expect(style_node(target, 'm1_ListPara')).not_to be_nil
+      expect(imported_abs.at_xpath('.//w:lvl/w:pStyle/@w:val', ns).value).to eq('m1_ListPara')
+      expect(styles_importer.style_id_map).to eq('ListPara' => 'm1_ListPara')
+    end
+  end
+
+  describe '#import_all' do
+    it 'imports every num definition from source' do
+      target = build_doc_without_numbering
+      source = build_doc_with_numbering(
+        wrap_numbering(abstract_num(0), abstract_num(1), num(1, 0), num(2, 1))
+      )
+
+      importer = described_class.new(target, source)
+      importer.import_all
+
+      expect(importer.num_id_map.keys.sort).to eq(%w[1 2])
+      expect(num_nodes(target).size).to eq(2)
+      expect(abstract_num_nodes(target).size).to eq(2)
+    end
+  end
+end

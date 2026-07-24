@@ -2,7 +2,8 @@
 
 require 'spec_helper'
 require 'docx/document'
-require 'tempfile'
+require 'securerandom'
+require 'tmpdir'
 
 describe 'table merge write API' do
   fixtures_path = File.join('spec/fixtures/tables')
@@ -38,9 +39,7 @@ describe 'table merge write API' do
   end
 
   def round_trip_without_stderr(doc)
-    temp_file = Tempfile.new(['table_merge_write', '.docx'])
-    temp_path = temp_file.path
-    temp_file.close
+    temp_path = File.join(Dir.tmpdir, "table_merge_write_#{SecureRandom.hex(8)}.docx")
 
     begin
       doc.save(temp_path)

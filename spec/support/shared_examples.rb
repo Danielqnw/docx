@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require 'securerandom'
+require 'tmpdir'
+
 RSpec.shared_examples_for 'reading' do
   it 'should read the document' do
     expect(@doc.paragraphs.size).to eq(2)
@@ -50,14 +53,12 @@ RSpec.shared_examples_for 'saving to file' do
   end
 
   it 'should save to a tempfile' do
-    temp_file = Tempfile.new(['docx_gem', '.docx'])
-    @new_doc_path = temp_file.path
+    @new_doc_path = File.join(Dir.tmpdir, "docx_gem_#{SecureRandom.hex(8)}.docx")
     @doc.save(@new_doc_path)
     @new_doc = Docx::Document.open(@new_doc_path)
     expect(@new_doc.paragraphs.size).to eq(@doc.paragraphs.size)
 
-    temp_file.close
-    temp_file.unlink
+    File.delete(@new_doc_path)
     # ensure temp file has been removed
     expect(File.exist?(@new_doc_path)).to eq(false)
   end

@@ -76,9 +76,23 @@
   aside {
     position:sticky; top:0; align-self:start; height:100vh;
     border-right:1px solid var(--line);
-    padding:30px 26px 40px; overflow-y:auto;
+    padding:30px 22px 40px 26px; overflow-y:auto;
     background:linear-gradient(180deg, color-mix(in srgb, var(--paper) 92%, transparent), transparent);
     backdrop-filter:blur(4px);
+    scrollbar-width:thin;
+    scrollbar-color:color-mix(in srgb, var(--line) 70%, transparent) transparent;
+  }
+  aside::-webkit-scrollbar { width:5px; }
+  aside::-webkit-scrollbar-track { background:transparent; }
+  aside::-webkit-scrollbar-thumb {
+    background:color-mix(in srgb, var(--line) 55%, transparent);
+    border-radius:999px;
+    border:1px solid transparent;
+    background-clip:padding-box;
+  }
+  aside:hover::-webkit-scrollbar-thumb {
+    background:color-mix(in srgb, var(--ink-faint) 45%, var(--line));
+    background-clip:padding-box;
   }
   .brand { display:flex; align-items:baseline; gap:10px; margin-bottom:4px; }
   .brand .logo {
@@ -360,7 +374,8 @@ const C = [
     {i:"text", zh:["文本替换","保留格式替换，并可用正则捕获组"], en:["Text substitution","Preserve formatting, optional regex captures"]},
     {i:"fill", zh:["模板填充","跨 run 替换、占位符插图、勾选框、render 入口"], en:["Template filling","Cross-run substitution, placeholder images, checkboxes, render"]},
     {i:"style", zh:["样式管理","新增/修改/删除段落与字符样式"], en:["Styles","Add/modify/remove paragraph & character styles"]},
-    {i:"low", zh:["底层访问","需要时直接操作 Nokogiri 节点"], en:["Low-level","Reach the underlying Nokogiri nodes anytime"]}
+    {i:"low", zh:["底层访问","需要时直接操作 Nokogiri 节点"], en:["Low-level","Reach the underlying Nokogiri nodes anytime"]},
+    {i:"import", zh:["跨文档导入","把源文档正文导入目标，隔离样式/编号/图片/书签 id"], en:["Cross-doc import","Import body nodes across docs, isolating style/num/media/bookmark ids"]}
   ]}
 ]},
 
@@ -995,6 +1010,55 @@ d.styles_configuration.remove_style('Red')`},
   ]}
 ]},
 
+{ id:"cross-document-import", lvl:1, t:{zh:"跨文档导入", en:"Cross-document import"}, blocks:[
+  {type:"p", zh:"跨文档把源文档的正文节点（表格/段落等）导入目标文档时，gem 会对 <code>styleId</code> / <code>numId</code> / <code>rId</code>（图片、超链接）/ 书签 id 做<strong>命名空间隔离</strong>，并把它们依赖的样式、编号、媒体等定义一并导入目标文档对应部件——避免直接复制导致的格式错乱与 id 撞车。", en:"When importing body nodes (tables, paragraphs, etc.) from a source document into a target, the gem <strong>namespaces</strong> <code>styleId</code>, <code>numId</code>, <code>rId</code> (images, hyperlinks), and bookmark ids, pulling over the styles, numbering, and media they depend on into the target's parts — avoiding format breakage and id collisions from a raw copy."},
+  {type:"code",
+   zh:`require 'docx'
+
+target = Docx::Document.open('target.docx')
+source = Docx::Document.open('source.docx')
+
+# 绑定 (target, source)，多次导入复用映射与去重
+importer = Docx::Merge::Importer.new(target, source)
+
+anchor = target.paragraphs.last.node
+source.tables.each do |table|
+  imported = importer.import(table.node)   # 完成样式/编号/图片/书签隔离
+  anchor.add_previous_sibling(imported)    # 插入目标正文
+end
+
+target.save('merged.docx')`,
+   en:`require 'docx'
+
+target = Docx::Document.open('target.docx')
+source = Docx::Document.open('source.docx')
+
+# bind (target, source), reuse mappings & dedupe across imports
+importer = Docx::Merge::Importer.new(target, source)
+
+anchor = target.paragraphs.last.node
+source.tables.each do |table|
+  imported = importer.import(table.node)   # isolates style, numbering, media & bookmark ids
+  anchor.add_previous_sibling(imported)    # insert into target body
+end
+
+target.save('merged.docx')`},
+  {type:"p", zh:"便捷方法 <code>Docx::Document#import_node</code> / <code>import_before</code> / <code>import_after</code> 会按 source 自动缓存 importer；<code>import_node</code> 支持 <code>fallback:</code>（默认 <code>true</code>，失败时回退为普通复制）。", en:"Convenience methods <code>Docx::Document#import_node</code>, <code>import_before</code>, and <code>import_after</code> cache an importer per source automatically; <code>import_node</code> accepts <code>fallback:</code> (default <code>true</code> — on failure, falls back to a plain copy)."},
+  {type:"code", code:`# 便捷：导入并插到锚点前/后（内部按 source 缓存 importer）
+target.import_before(source, source.tables.first.node, anchor)
+target.import_after(source, some_source_paragraph_node, anchor)
+
+# 传入自己的 importer 以显式复用；fallback: false 可让异常直接抛出
+target.import_node(source, node, importer: importer, fallback: false)`},
+  {type:"table", head:{zh:["引用","部件","隔离策略"], en:["Reference","Part","Isolation"]}, rows:[
+    {zh:["<code>w:pStyle</code> / <code>w:rStyle</code> / <code>w:tblStyle</code>","样式（styles.xml）","同名冲突改名、缺失导入、等价复用"], en:["<code>w:pStyle</code> / <code>w:rStyle</code> / <code>w:tblStyle</code>","Styles (styles.xml)","Rename on name clash, import if missing, reuse equivalents"]},
+    {zh:["<code>w:numPr</code>/<code>w:numId</code>","编号（numbering.xml）","id 偏移避冲突，目标无 numbering 时自动新建"], en:["<code>w:numPr</code>/<code>w:numId</code>","Numbering (numbering.xml)","Offset ids to avoid clashes; create numbering part if target has none"]},
+    {zh:["<code>r:embed</code> / <code>r:id</code> / <code>r:link</code>","图片/超链接（rels + media）","图片落盘不重名、外部关系不复制、同图去重"], en:["<code>r:embed</code> / <code>r:id</code> / <code>r:link</code>","Images/hyperlinks (rels + media)","Unique media filenames, skip external rels, dedupe identical images"]},
+    {zh:["<code>w:bookmarkStart</code>/<code>End</code> <code>@w:id</code>","书签 id","按偏移隔离，避免与目标撞车"], en:["<code>w:bookmarkStart</code>/<code>End</code> <code>@w:id</code>","Bookmark ids","Offset ids to avoid collisions with the target"]}
+  ]},
+  {type:"note", variant:"note", zh:"不改动目标文档已有内容，冲突一律通过给 source 侧改名/偏移解决；导入的节点已在目标文档上下文，可直接用 Nokogiri 的 <code>add_previous_sibling</code> / <code>add_next_sibling</code> 插入。", en:"Existing target content is never modified — conflicts are resolved by renaming or offsetting on the source side; imported nodes live in the target's context and can be inserted with Nokogiri's <code>add_previous_sibling</code> / <code>add_next_sibling</code>."}
+]},
+
 { id:"advanced", lvl:1, t:{zh:"进阶：底层节点",en:"Advanced: raw nodes"}, blocks:[
   {type:"p", zh:"当封装 API 不够用时，可直接操作底层 <code>Nokogiri</code> 节点：", en:"When the wrapped API isn't enough, drop down to the underlying <code>Nokogiri</code> nodes:"},
   {type:"code",
@@ -1055,7 +1119,8 @@ const ICONS = {
   text:'<path d="M4 7V5h16v2"/><path d="M9 19h6M12 5v14"/>',
   style:'<path d="M12 3a9 9 0 1 0 0 18c1.4 0 2-1 2-2 0-1.3-1-1.6-1-2.6 0-.8.7-1.4 1.6-1.4H17a4 4 0 0 0 4-4c0-4.4-4-8-9-8z"/><circle cx="7.5" cy="11" r="1"/><circle cx="12" cy="7.5" r="1"/><circle cx="16.5" cy="11" r="1"/>',
   low:'<path d="M14.5 6.5a3.5 3.5 0 0 1-4.7 4.7L5 16l3 3 4.8-4.8a3.5 3.5 0 0 1 4.7-4.7l-2.3 2.3-2-2z"/>',
-  fill:'<rect x="4" y="3" width="16" height="18" rx="1"/><path d="M8 8h6M8 12h5"/><path d="M13.5 17l1.6 1.6L19 15"/>'
+  fill:'<rect x="4" y="3" width="16" height="18" rx="1"/><path d="M8 8h6M8 12h5"/><path d="M13.5 17l1.6 1.6L19 15"/>',
+  import:'<path d="M4 4h8l4 4v12H4z"/><path d="M12 4v4h4"/><path d="M14 14h7"/><path d="M18 11l3 3-3 3"/>'
 };
 function svgIcon(name){ return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]||""}</svg>`; }
 

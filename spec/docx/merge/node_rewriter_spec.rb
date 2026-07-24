@@ -1,0 +1,300 @@
+# frozen_string_literal: true
+
+require 'spec_helper'
+require 'docx'
+
+describe Docx::Merge::NodeRewriter do
+  def xml_ns
+    Docx::Document::XML_NAMESPACES
+  end
+
+  def w_ns
+    xml_ns['w']
+  end
+
+  def frag(xml)
+    Nokogiri::XML(xml).root
+  end
+
+  def rewriter(style_id_map: {}, num_id_map: {}, rid_map: {}, bookmark_id_offset: 0)
+    described_class.new(
+      style_id_map: style_id_map,
+      num_id_map: num_id_map,
+      rid_map: rid_map,
+      bookmark_id_offset: bookmark_id_offset
+    )
+  end
+
+  describe '#rewrite' do
+    it 'rewrites table style references' do
+      node = frag(<<~XML)
+        <w:tbl xmlns:w="#{w_ns}">
+          <w:tblPr>
+            <w:tblStyle w:val="TblX"/>
+          </w:tblPr>
+          <w:tr>
+            <w:tc>
+              <w:p/>
+            </w:tc>
+          </w:tr>
+        </w:tbl>
+      XML
+
+      rewriter(style_id_map: { 'TblX' => 'm1_TblX' }).rewrite(node)
+
+      expect(node.at_xpath('.//w:tblStyle', xml_ns)['w:val']).to eq('m1_TblX')
+    end
+
+    it 'rewrites deeply nested paragraph and run style references' do
+      node = frag(<<~XML)
+        <w:tbl xmlns:w="#{w_ns}">
+          <w:tr>
+            <w:tc>
+              <w:p>
+                <w:pPr>
+                  <w:pStyle w:val="Heading1"/>
+                </w:pPr>
+                <w:r>
+                  <w:rPr>
+                    <w:rStyle w:val="Emphasis"/>
+                  </w:rPr>
+                  <w:t>text</w:t>
+                </w:r>
+              </w:p>
+            </w:tc>
+          </w:tr>
+        </w:tbl>
+      XML
+
+      rewriter(style_id_map: { 'Heading1' => 'm1_Heading1', 'Emphasis' => 'm1_Emphasis' }).rewrite(node)
+
+      expect(node.at_xpath('.//w:pStyle', xml_ns)['w:val']).to eq('m1_Heading1')
+      expect(node.at_xpath('.//w:rStyle', xml_ns)['w:val']).to eq('m1_Emphasis')
+    end
+
+    it 'rewrites numId only under numPr' do
+      node = frag(<<~XML)
+        <w:p xmlns:w="#{w_ns}">
+          <w:pPr>
+            <w:numPr>
+              <w:numId w:val="42"/>
+            </w:numPr>
+          </w:pPr>
+          <w:num w:numId="99"/>
+        </w:p>
+      XML
+
+      rewriter(num_id_map: { '42' => '7' }).rewrite(node)
+
+      expect(node.at_xpath('.//w:numPr/w:numId', xml_ns)['w:val']).to eq('7')
+      expect(node.at_xpath('./w:num', xml_ns)['w:numId']).to eq('99')
+    end
+
+    it 'leaves unmapped style and numId values unchanged' do
+      node = frag(<<~XML)
+        <w:p xmlns:w="#{w_ns}">
+          <w:pPr>
+            <w:pStyle w:val="KeepMe"/>
+            <w:numPr>
+              <w:numId w:val="100"/>
+            </w:numPr>
+          </w:pPr>
+          <w:r>
+            <w:rPr>
+              <w:rStyle w:val="AlsoKeep"/>
+            </w:rPr>
+          </w:r>
+        </w:p>
+      XML
+
+      rewriter(style_id_map: { 'Other' => 'mapped' }, num_id_map: { '200' => '300' }).rewrite(node)
+
+      expect(node.at_xpath('.//w:pStyle', xml_ns)['w:val']).to eq('KeepMe')
+      expect(node.at_xpath('.//w:rStyle', xml_ns)['w:val']).to eq('AlsoKeep')
+      expect(node.at_xpath('.//w:numPr/w:numId', xml_ns)['w:val']).to eq('100')
+    end
+
+    it 'is a no-op when maps are empty' do
+      xml = <<~XML
+        <w:p xmlns:w="#{w_ns}">
+          <w:pPr>
+            <w:pStyle w:val="Heading1"/>
+          </w:pPr>
+        </w:p>
+      XML
+      node = frag(xml)
+
+      rewriter.rewrite(node)
+
+      expect(node.to_xml).to eq(frag(xml).to_xml)
+    end
+
+    it 'preserves w:val namespace prefix in serialized output' do
+      node = frag(<<~XML)
+        <w:p xmlns:w="#{w_ns}">
+          <w:pPr>
+            <w:pStyle w:val="Heading1"/>
+          </w:pPr>
+        </w:p>
+      XML
+
+      rewriter(style_id_map: { 'Heading1' => 'm1_Heading1' }).rewrite(node)
+      serialized = node.to_xml
+
+      expect(serialized).to include('w:val="m1_Heading1"')
+      expect(serialized.scan('xmlns:w=').length).to eq(1)
+    end
+
+    it 'returns the same node object' do
+      node = frag(%(<w:p xmlns:w="#{w_ns}"><w:pPr><w:pStyle w:val="A"/></w:pPr></w:p>))
+
+      result = rewriter(style_id_map: { 'A' => 'B' }).rewrite(node)
+
+      expect(result).to equal(node)
+    end
+
+    it 'rewrites style references when the root node itself is a style element' do
+      node = frag(%(<w:pStyle xmlns:w="#{w_ns}" w:val="Heading1"/>))
+
+      rewriter(style_id_map: { 'Heading1' => 'm1_Heading1' }).rewrite(node)
+
+      expect(node['w:val']).to eq('m1_Heading1')
+    end
+
+    it 'rewrites numId when the root node is numPr' do
+      node = frag(<<~XML)
+        <w:numPr xmlns:w="#{w_ns}">
+          <w:numId w:val="42"/>
+        </w:numPr>
+      XML
+
+      rewriter(num_id_map: { '42' => '7' }).rewrite(node)
+
+      expect(node.at_xpath('./w:numId', xml_ns)['w:val']).to eq('7')
+    end
+
+    it 'rewrites r:embed relationship references' do
+      r_ns = xml_ns['r']
+      a_ns = xml_ns['a']
+      node = frag(<<~XML)
+        <a:blip xmlns:a="#{a_ns}" xmlns:r="#{r_ns}" r:embed="rId5"/>
+      XML
+
+      rewriter(rid_map: { 'rId5' => 'rId9' }).rewrite(node)
+
+      expect(node['r:embed']).to eq('rId9')
+    end
+
+    it 'rewrites w:hyperlink r:id relationship references' do
+      r_ns = xml_ns['r']
+      node = frag(<<~XML)
+        <w:hyperlink xmlns:w="#{w_ns}" xmlns:r="#{r_ns}" r:id="rId3">
+          <w:r>
+            <w:t>link</w:t>
+          </w:r>
+        </w:hyperlink>
+      XML
+
+      rewriter(rid_map: { 'rId3' => 'rId10' }).rewrite(node)
+
+      expect(node['r:id']).to eq('rId10')
+    end
+
+    it 'rewrites r:link relationship references' do
+      r_ns = xml_ns['r']
+      a_ns = xml_ns['a']
+      node = frag(<<~XML)
+        <a:blip xmlns:a="#{a_ns}" xmlns:r="#{r_ns}" r:link="rId4"/>
+      XML
+
+      rewriter(rid_map: { 'rId4' => 'rId8' }).rewrite(node)
+
+      expect(node['r:link']).to eq('rId8')
+    end
+
+    it 'leaves unmapped relationship references unchanged' do
+      r_ns = xml_ns['r']
+      a_ns = xml_ns['a']
+      node = frag(<<~XML)
+        <a:blip xmlns:a="#{a_ns}" xmlns:r="#{r_ns}" r:embed="rId5" r:link="rId6"/>
+      XML
+
+      rewriter(rid_map: { 'rId9' => 'rId10' }).rewrite(node)
+
+      expect(node['r:embed']).to eq('rId5')
+      expect(node['r:link']).to eq('rId6')
+    end
+
+    it 'preserves r namespace prefixes without duplicate xmlns in serialized output' do
+      r_ns = xml_ns['r']
+      a_ns = xml_ns['a']
+      node = frag(<<~XML)
+        <a:blip xmlns:a="#{a_ns}" xmlns:r="#{r_ns}" r:embed="rId5"/>
+      XML
+
+      rewriter(rid_map: { 'rId5' => 'rId9' }).rewrite(node)
+      serialized = node.to_xml
+
+      expect(serialized).to include('r:embed="rId9"')
+      expect(serialized.scan('xmlns:r=').length).to eq(1)
+    end
+
+    it 'offsets bookmarkStart and bookmarkEnd ids by bookmark_id_offset' do
+      node = frag(<<~XML)
+        <w:p xmlns:w="#{w_ns}">
+          <w:bookmarkStart w:id="1" w:name="bm"/>
+          <w:r><w:t>text</w:t></w:r>
+          <w:bookmarkEnd w:id="1"/>
+        </w:p>
+      XML
+
+      rewriter(bookmark_id_offset: 10).rewrite(node)
+
+      expect(node.at_xpath('.//w:bookmarkStart', xml_ns)['w:id']).to eq('11')
+      expect(node.at_xpath('.//w:bookmarkEnd', xml_ns)['w:id']).to eq('11')
+    end
+
+    it 'leaves bookmark ids unchanged when bookmark_id_offset is zero' do
+      node = frag(<<~XML)
+        <w:p xmlns:w="#{w_ns}">
+          <w:bookmarkStart w:id="1" w:name="bm"/>
+          <w:bookmarkEnd w:id="1"/>
+        </w:p>
+      XML
+
+      rewriter(bookmark_id_offset: 0).rewrite(node)
+
+      expect(node.at_xpath('.//w:bookmarkStart', xml_ns)['w:id']).to eq('1')
+      expect(node.at_xpath('.//w:bookmarkEnd', xml_ns)['w:id']).to eq('1')
+    end
+
+    it 'skips non-integer bookmark ids' do
+      node = frag(<<~XML)
+        <w:p xmlns:w="#{w_ns}">
+          <w:bookmarkStart w:id="abc" w:name="bm"/>
+          <w:bookmarkEnd w:id="abc"/>
+        </w:p>
+      XML
+
+      rewriter(bookmark_id_offset: 10).rewrite(node)
+
+      expect(node.at_xpath('.//w:bookmarkStart', xml_ns)['w:id']).to eq('abc')
+      expect(node.at_xpath('.//w:bookmarkEnd', xml_ns)['w:id']).to eq('abc')
+    end
+
+    it 'preserves w:id namespace prefix in serialized bookmark output' do
+      node = frag(<<~XML)
+        <w:p xmlns:w="#{w_ns}">
+          <w:bookmarkStart w:id="1" w:name="bm"/>
+          <w:bookmarkEnd w:id="1"/>
+        </w:p>
+      XML
+
+      rewriter(bookmark_id_offset: 5).rewrite(node)
+      serialized = node.to_xml
+
+      expect(serialized).to include('w:id="6"')
+      expect(serialized.scan('xmlns:w=').length).to eq(1)
+    end
+  end
+end
